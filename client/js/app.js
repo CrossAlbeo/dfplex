@@ -25,6 +25,13 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
+// Render-on-demand: the loop only repaints when something changed (data, camera, or cursor),
+// so an idle view costs nothing instead of re-drawing the map 60x/second.
+let needsDraw = true;
+function invalidate() {
+  needsDraw = true;
+}
+
 function connect() {
   if (source) source.stop();
   world = new World();
@@ -38,13 +45,20 @@ function connect() {
 
   source.onMessage((m) => {
     world.apply(m);
+    if (m.type === S2C.MAP) renderer.invalidateMap();
     if (m.type === S2C.HELLO) {
-      cam.z = world.map.zSurface ?? 0;
-      cam.centerOn(world.map.xCount / 2, world.map.yCount / 2, view.clientWidth, view.clientHeight);
+      renderer.invalidateMap();
+      // Open where the source suggests (live DF's view center), else the map middle.
+      const start = m.start;
+      cam.z = start?.z ?? world.map.zSurface ?? 0;
+      const fx = start?.x ?? world.map.xCount / 2;
+      const fy = start?.y ?? world.map.yCount / 2;
+      cam.centerOn(fx, fy, view.clientWidth, view.clientHeight);
       setStatus(`${world.server} · you are "${world.you?.nick ?? "?"}"`);
     } else if (m.type === S2C.ERROR) {
       setStatus(`error: ${m.message}`);
     }
+    invalidate();
   });
 
   source.start();
@@ -60,9 +74,13 @@ window.addEventListener("mousemove", (e) => {
   const rect = view.getBoundingClientRect();
   const ox = e.clientX - rect.left;
   const oy = e.clientY - rect.top;
-  if (dragging) cam.panByPixels(e.movementX, e.movementY);
+  if (dragging) {
+    cam.panByPixels(e.movementX, e.movementY);
+    invalidate();
+  }
   if (ox >= 0 && oy >= 0 && ox <= rect.width && oy <= rect.height) {
     renderer.cursor = cam.screenToTile(ox, oy);
+    invalidate();
   }
 });
 
@@ -72,6 +90,7 @@ view.addEventListener(
     e.preventDefault();
     const rect = view.getBoundingClientRect();
     cam.zoomAt(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX - rect.left, e.clientY - rect.top);
+    invalidate();
   },
   { passive: false }
 );
@@ -97,6 +116,7 @@ window.addEventListener("keydown", (e) => {
       max: cam.screenToTile(view.clientWidth, view.clientHeight),
     });
   }
+  invalidate();
   e.preventDefault();
 });
 
@@ -105,7 +125,10 @@ sourceSel.addEventListener("change", () => {
   wsUrl.style.display = sourceSel.value === "ws" ? "" : "none";
 });
 
-window.addEventListener("resize", () => renderer.resize());
+window.addEventListener("resize", () => {
+  renderer.resize();
+  invalidate();
+});
 
 // ---- render loop ----
 
@@ -123,8 +146,11 @@ function hudText() {
 }
 
 function loop() {
-  renderer.draw(world, cam);
-  hud.textContent = hudText();
+  if (needsDraw) {
+    renderer.draw(world, cam);
+    hud.textContent = hudText();
+    needsDraw = false;
+  }
   requestAnimationFrame(loop);
 }
 

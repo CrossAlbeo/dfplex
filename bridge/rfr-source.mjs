@@ -1,0 +1,93 @@
+// RFRSource: a DataSource backed by a live DF via RemoteFortressReader (through DFAccess).
+// One instance per browser connection — it tracks that client's active z-level (from its
+// `viewport` messages) and streams hello/map/units/tick for it. Multiple instances share one
+// DFAccess (and thus one DFHack socket); the client serializes the actual RPCs.
+import { DataSource } from "../client/js/datasource.js";
+import { PROTOCOL, S2C, C2S } from "../client/js/protocol.js";
+
+export class RFRSource extends DataSource {
+  constructor(df, opts = {}) {
+    super();
+    this.df = df; // shared DFAccess
+    this.pollMs = opts.pollMs ?? 750;
+    this.nick = opts.nick ?? "Player";
+    this.activeZ = null;
+    this.frame = 0;
+    this._timer = null;
+    this._busy = false;
+    this._wantZ = null; // pending z-level requested via viewport
+    this._sentHash = new Map(); // z -> last level hash sent to this client
+  }
+
+  async start() {
+    super.start();
+    await this.df.mapInfo(); // cache dims on df for level()/units()
+    const dims = this.df.dims;
+    const v = await this.df.view();
+    const z = v.z;
+    this.activeZ = z;
+
+    this._emit({
+      type: S2C.HELLO,
+      protocol: PROTOCOL,
+      server: "rfr-bridge",
+      you: { id: "local", nick: this.nick },
+      map: { xCount: dims.xCount, yCount: dims.yCount, zCount: dims.zCount, zSurface: z },
+      // Where to open the camera: DF's own view center, so the browser shows your fort.
+      start: { x: v.x + (v.w >> 1), y: v.y + (v.h >> 1), z },
+    });
+
+    await this._sendLevel(z);
+    await this._sendUnits();
+
+    if (typeof setInterval === "function") {
+      this._timer = setInterval(() => this._poll(), this.pollMs);
+    }
+  }
+
+  /** Client -> source messages (join / viewport; command lands in Phase 2). */
+  send(msg) {
+    if (!msg || typeof msg !== "object") return;
+    if (msg.type === C2S.JOIN && typeof msg.nick === "string") {
+      this.nick = msg.nick;
+    } else if (msg.type === C2S.VIEWPORT && Number.isInteger(msg.z)) {
+      if (msg.z !== this.activeZ) this._wantZ = msg.z; // applied on the next poll
+    }
+  }
+
+  async _poll() {
+    if (this._busy || !this.running) return;
+    this._busy = true;
+    try {
+      if (this._wantZ != null) {
+        this.activeZ = this._wantZ;
+        this._wantZ = null;
+      }
+      this.frame++;
+      await this._sendLevel(this.activeZ);
+      await this._sendUnits();
+      this._emit({ type: S2C.TICK, frame: this.frame, fps: Math.round(1000 / this.pollMs) });
+    } catch (e) {
+      this._emit({ type: S2C.ERROR, message: `RFR poll: ${e.message}` });
+    } finally {
+      this._busy = false;
+    }
+  }
+
+  async _sendLevel(z) {
+    const lvl = await this.df.level(z);
+    if (this._sentHash.get(z) === lvl.hash) return; // unchanged since last send to this client
+    this._sentHash.set(z, lvl.hash);
+    this._emit({ type: S2C.MAP, z, origin: { x: 0, y: 0 }, w: lvl.w, h: lvl.h, tiles: lvl.tiles });
+  }
+
+  async _sendUnits() {
+    this._emit({ type: S2C.UNITS, list: await this.df.units() });
+  }
+
+  stop() {
+    super.stop();
+    if (this._timer) clearInterval(this._timer);
+    this._timer = null;
+  }
+}

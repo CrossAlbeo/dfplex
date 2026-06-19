@@ -16,13 +16,16 @@ Every message is `{ "type": "<name>", ... }`.
 
 ### `hello`
 Sent once on connect. Establishes protocol version, map dimensions, and the client's identity.
+`start` is optional: where the client should open its camera (the live source sends DF's own
+view center so the browser shows the fortress; the mock omits it and the client uses map center).
 ```jsonc
 {
   "type": "hello",
   "protocol": "dfplex2",
   "server": "mock|rfr-bridge|plugin",
   "you":   { "id": "c3", "nick": "Urist" },
-  "map":   { "xCount": 48, "yCount": 48, "zCount": 5, "zSurface": 3 }
+  "map":   { "xCount": 48, "yCount": 48, "zCount": 5, "zSurface": 3 },
+  "start": { "x": 97, "y": 126, "z": 158 }   // optional camera focus
 }
 ```
 
