@@ -55,6 +55,14 @@ The full set of visible units (mock/early bridge send the whole list; later we d
 }
 ```
 
+### `desig`
+Sparse list of dig designations on a z-level (`d` is the designation kind: 1=dig, 2=updown
+stair, 3=channel, 4=ramp, 5=down stair, 6=up stair). Sent per active z each tick, so user
+designations and dwarves finishing a dig both show up. The client draws these as marks.
+```jsonc
+{ "type": "desig", "z": 3, "list": [ { "x": 10, "y": 12, "d": 1 } ] }
+```
+
 ### `tick`
 Heartbeat / animation pulse. Lets the client show liveness and drive non-rAF animation.
 ```jsonc

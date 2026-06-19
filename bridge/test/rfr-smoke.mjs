@@ -10,12 +10,13 @@ const df = new DFAccess({
   port: Number(process.env.DF_PORT) || 5000,
 });
 
-const seen = { hello: null, map: [], units: null, tick: 0, error: [] };
+const seen = { hello: null, map: [], units: null, desig: null, tick: 0, error: [] };
 const source = new RFRSource(df, { pollMs: 400 });
 source.onMessage((m) => {
   if (m.type === "hello") seen.hello = m;
   else if (m.type === "map") seen.map.push(m);
   else if (m.type === "units") seen.units = m;
+  else if (m.type === "desig") seen.desig = m;
   else if (m.type === "tick") seen.tick++;
   else if (m.type === "error") seen.error.push(m.message);
 });
@@ -52,6 +53,7 @@ if (seen.map.length) {
 }
 
 ok(seen.units && Array.isArray(seen.units.list), `received units (${seen.units ? seen.units.list.length : 0})`);
+ok(seen.desig && Array.isArray(seen.desig.list), `received desig (${seen.desig ? seen.desig.list.length : 0} designations)`);
 ok(seen.tick >= 1, `received ${seen.tick} tick(s)`);
 ok(seen.error.length === 0, seen.error.length ? `errors: ${seen.error.join("; ")}` : "no errors");
 

@@ -21,6 +21,7 @@ export const METHODS = {
   GetBlockList: { input: "RemoteFortressReader.BlockRequest", output: "RemoteFortressReader.BlockList", plugin: "RemoteFortressReader" },
   GetUnitList: { input: "dfproto.EmptyMessage", output: "RemoteFortressReader.UnitList", plugin: "RemoteFortressReader" },
   GetViewInfo: { input: "dfproto.EmptyMessage", output: "RemoteFortressReader.ViewInfo", plugin: "RemoteFortressReader" },
+  SendDigCommand: { input: "RemoteFortressReader.DigCommand", output: "dfproto.EmptyMessage", plugin: "RemoteFortressReader" },
 };
 
 export class DFHackClient {

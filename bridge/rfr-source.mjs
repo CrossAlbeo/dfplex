@@ -37,7 +37,7 @@ export class RFRSource extends DataSource {
       start: { x: v.x + (v.w >> 1), y: v.y + (v.h >> 1), z },
     });
 
-    await this._sendLevel(z);
+    await this._streamZ(z);
     await this._sendUnits();
 
     if (typeof setInterval === "function") {
@@ -45,13 +45,19 @@ export class RFRSource extends DataSource {
     }
   }
 
-  /** Client -> source messages (join / viewport; command lands in Phase 2). */
+  /** Client -> source messages: join / viewport / command. */
   send(msg) {
     if (!msg || typeof msg !== "object") return;
     if (msg.type === C2S.JOIN && typeof msg.nick === "string") {
       this.nick = msg.nick;
     } else if (msg.type === C2S.VIEWPORT && Number.isInteger(msg.z)) {
       if (msg.z !== this.activeZ) this._wantZ = msg.z; // applied on the next poll
+    } else if (msg.type === C2S.COMMAND && msg.op === "designate") {
+      const tiles = Array.isArray(msg.tiles) ? msg.tiles : [];
+      this.df
+        .designate(msg.kind || "dig", tiles)
+        .then(() => this._streamZ(this.activeZ)) // reflect the new designation promptly
+        .catch((e) => this._emit({ type: S2C.ERROR, message: `designate: ${e.message}` }));
     }
   }
 
@@ -64,7 +70,7 @@ export class RFRSource extends DataSource {
         this._wantZ = null;
       }
       this.frame++;
-      await this._sendLevel(this.activeZ);
+      await this._streamZ(this.activeZ);
       await this._sendUnits();
       this._emit({ type: S2C.TICK, frame: this.frame, fps: Math.round(1000 / this.pollMs) });
     } catch (e) {
@@ -74,11 +80,15 @@ export class RFRSource extends DataSource {
     }
   }
 
-  async _sendLevel(z) {
+  // Stream a z-level: the map only when its tiles changed (hash), plus the (cheap, sparse)
+  // dig designations every time so user actions show up promptly.
+  async _streamZ(z) {
     const lvl = await this.df.level(z);
-    if (this._sentHash.get(z) === lvl.hash) return; // unchanged since last send to this client
-    this._sentHash.set(z, lvl.hash);
-    this._emit({ type: S2C.MAP, z, origin: { x: 0, y: 0 }, w: lvl.w, h: lvl.h, tiles: lvl.tiles });
+    if (this._sentHash.get(z) !== lvl.hash) {
+      this._sentHash.set(z, lvl.hash);
+      this._emit({ type: S2C.MAP, z, origin: { x: 0, y: 0 }, w: lvl.w, h: lvl.h, tiles: lvl.tiles });
+    }
+    this._emit({ type: S2C.DESIG, z, list: lvl.desig });
   }
 
   async _sendUnits() {

@@ -9,6 +9,7 @@ export const S2C = Object.freeze({
   HELLO: "hello",
   MAP: "map",
   UNITS: "units",
+  DESIG: "desig",
   TICK: "tick",
   CHAT: "chat",
   ERROR: "error",

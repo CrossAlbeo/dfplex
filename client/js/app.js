@@ -67,9 +67,52 @@ function connect() {
 
 // ---- input: all client-side, so each browser has an independent view ----
 
-let dragging = false;
-view.addEventListener("mousedown", () => (dragging = true));
-window.addEventListener("mouseup", () => (dragging = false));
+let dragging = false; // plain drag = pan
+let selecting = false; // shift-drag = designate dig
+let selStart = null;
+let selEnd = null;
+
+function selRect() {
+  return {
+    x0: Math.min(selStart.x, selEnd.x),
+    y0: Math.min(selStart.y, selEnd.y),
+    x1: Math.max(selStart.x, selEnd.x),
+    y1: Math.max(selStart.y, selEnd.y),
+  };
+}
+
+view.addEventListener("mousedown", (e) => {
+  const rect = view.getBoundingClientRect();
+  const tile = cam.screenToTile(e.clientX - rect.left, e.clientY - rect.top);
+  if (e.shiftKey) {
+    selecting = true;
+    selStart = selEnd = tile;
+    renderer.selection = selRect();
+    invalidate();
+    e.preventDefault();
+  } else {
+    dragging = true;
+  }
+});
+
+window.addEventListener("mouseup", () => {
+  if (selecting) {
+    selecting = false;
+    renderer.selection = null;
+    const r = selRect();
+    const tiles = [];
+    for (let y = r.y0; y <= r.y1 && tiles.length < 4096; y++) {
+      for (let x = r.x0; x <= r.x1 && tiles.length < 4096; x++) tiles.push({ x, y, z: cam.z });
+    }
+    if (source && source.running && tiles.length) {
+      source.send({ type: C2S.COMMAND, op: "designate", kind: "dig", tiles });
+      setStatus(`designated ${tiles.length} tile(s) for digging`);
+    }
+    invalidate();
+  }
+  dragging = false;
+});
+
 window.addEventListener("mousemove", (e) => {
   const rect = view.getBoundingClientRect();
   const ox = e.clientX - rect.left;
@@ -79,7 +122,12 @@ window.addEventListener("mousemove", (e) => {
     invalidate();
   }
   if (ox >= 0 && oy >= 0 && ox <= rect.width && oy <= rect.height) {
-    renderer.cursor = cam.screenToTile(ox, oy);
+    const tile = cam.screenToTile(ox, oy);
+    renderer.cursor = tile;
+    if (selecting) {
+      selEnd = tile;
+      renderer.selection = selRect();
+    }
     invalidate();
   }
 });
@@ -142,6 +190,7 @@ function hudText() {
     `cursor: ${c ? `${c.x},${c.y} (tile ${code})` : "—"}`,
     `units: ${world.units.size}`,
     `frame: ${world.frame}  fps(sim): ${world.fps}`,
+    `[shift-drag: dig]`,
   ].join("   ");
 }
 

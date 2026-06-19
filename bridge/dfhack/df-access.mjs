@@ -6,6 +6,9 @@ import { DFHackClient } from "./client.mjs";
 import { buildTileTable } from "./tiles.mjs";
 import { TILE } from "../../client/js/protocol.js";
 
+// dfplex command kind -> RFR TileDigDesignation enum value.
+const DESIGNATIONS = { dig: 1, stair: 2, channel: 3, ramp: 4, downstair: 5, upstair: 6, remove: 0 };
+
 export class DFAccess {
   constructor(opts = {}) {
     this.opts = opts; // { host, port }
@@ -89,6 +92,7 @@ export class DFAccess {
       force_reload: true, // v1: always a full snapshot (delta streaming is a later optimization)
     });
 
+    const desig = []; // sparse dig designations on this level: { x, y, d }
     for (const b of bl.map_blocks || []) {
       const bt = b.tiles;
       if (!bt || !bt.length) continue;
@@ -97,6 +101,7 @@ export class DFAccess {
       const water = b.water;
       const magma = b.magma;
       const hidden = b.hidden;
+      const dig = b.tile_dig_designation;
       for (let i = 0; i < bt.length; i++) {
         const gx = ox + (i & 15); // x fastest: index = y*16 + x
         const gy = oy + (i >> 4);
@@ -111,6 +116,7 @@ export class DFAccess {
           else if (water && water[i] > 0) code = TILE.WATER;
         }
         tiles[gy * W + gx] = code;
+        if (dig && dig[i] > 0) desig.push({ x: gx, y: gy, d: dig[i] });
       }
     }
     // Cheap FNV-1a over the level so a source can skip re-sending an unchanged z-level.
@@ -118,7 +124,7 @@ export class DFAccess {
     for (let i = 0; i < tiles.length; i++) {
       hash = Math.imul((hash ^ tiles[i]) >>> 0, 0x01000193) >>> 0;
     }
-    return { z, w: W, h: H, tiles: Array.from(tiles), hash };
+    return { z, w: W, h: H, tiles: Array.from(tiles), hash, desig };
   }
 
   /** Visible on-map units as client unit dicts. */
@@ -139,4 +145,16 @@ export class DFAccess {
     }
     return out;
   }
+
+  /** Apply a dig-style designation to a list of {x,y,z} tiles via RFR SendDigCommand. */
+  async designate(kind, tiles) {
+    await this.connect();
+    if (!tiles || !tiles.length) return;
+    const designation = DESIGNATIONS[kind] ?? DESIGNATIONS.dig;
+    await this.client.call("SendDigCommand", {
+      designation,
+      locations: tiles.map((t) => ({ x: t.x, y: t.y, z: t.z })),
+    });
+  }
 }
+

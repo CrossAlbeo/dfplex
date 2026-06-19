@@ -15,6 +15,7 @@ export class Renderer {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d", { alpha: false });
     this.cursor = null; // {x,y} tile under the mouse, or null
+    this.selection = null; // {x0,y0,x1,y1} in-progress designation drag, or null
 
     this.mapCanvas = document.createElement("canvas");
     this.mapCtx = this.mapCanvas.getContext("2d", { alpha: false });
@@ -122,6 +123,32 @@ export class Renderer {
       if (sx < -cell || sy < -cell || sx > W || sy > H) continue;
       ctx.fillStyle = PALETTE[u.color ?? UNIT_DEFAULT.color];
       ctx.fillText(u.ch || UNIT_DEFAULT.ch, sx + cell / 2, sy + cell / 2 + 1);
+    }
+
+    // Dig designations on this z-level (yellow tint over the tile).
+    const desig = world.desigOnZ ? world.desigOnZ(cam.z) : [];
+    if (desig.length) {
+      ctx.fillStyle = "rgba(232,201,58,0.30)";
+      for (const d of desig) {
+        const sx = (d.x - cam.x) * cell;
+        const sy = (d.y - cam.y) * cell;
+        if (sx < -cell || sy < -cell || sx > W || sy > H) continue;
+        ctx.fillRect(sx, sy, cell, cell);
+      }
+    }
+
+    // In-progress selection rectangle (shift-drag to designate digging).
+    if (this.selection) {
+      const s = this.selection;
+      const sx = (s.x0 - cam.x) * cell;
+      const sy = (s.y0 - cam.y) * cell;
+      const w = (s.x1 - s.x0 + 1) * cell;
+      const h = (s.y1 - s.y0 + 1) * cell;
+      ctx.fillStyle = "rgba(232,201,58,0.20)";
+      ctx.fillRect(sx, sy, w, h);
+      ctx.strokeStyle = PALETTE[14];
+      ctx.lineWidth = 1;
+      ctx.strokeRect(sx + 0.5, sy + 0.5, w - 1, h - 1);
     }
 
     // Mouse cursor highlight.
