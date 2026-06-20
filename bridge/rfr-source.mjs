@@ -89,6 +89,7 @@ export class RFRSource extends DataSource {
       this._emit({ type: S2C.MAP, z, origin: { x: 0, y: 0 }, w: lvl.w, h: lvl.h, tiles: lvl.tiles });
     }
     this._emit({ type: S2C.DESIG, z, list: lvl.desig });
+    this._emit({ type: S2C.BUILDINGS, z, list: lvl.buildings });
   }
 
   async _sendUnits() {

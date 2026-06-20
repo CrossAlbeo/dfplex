@@ -10,6 +10,7 @@ export class World {
     this.levels = new Map(); // z -> { w, h, tiles: Uint8Array }
     this.units = new Map(); // id -> unit
     this.designations = new Map(); // z -> [{ x, y, d }] sparse dig designations
+    this.buildings = new Map(); // z -> [{ i, x0, y0, x1, y1, bt, st, active }] building footprints
     this.frame = 0;
     this.fps = 0;
     this.you = null;
@@ -33,6 +34,9 @@ export class World {
         break;
       case S2C.DESIG:
         this.designations.set(msg.z, msg.list || []);
+        break;
+      case S2C.BUILDINGS:
+        this.buildings.set(msg.z, msg.list || []);
         break;
       case S2C.TICK:
         this.frame = msg.frame;
@@ -92,5 +96,10 @@ export class World {
   /** Sparse dig designations on z-level `z`: [{ x, y, d }]. */
   desigOnZ(z) {
     return this.designations.get(z) || [];
+  }
+
+  /** Building footprints on z-level `z`: [{ i, x0, y0, x1, y1, bt, st, active }]. */
+  buildingsOnZ(z) {
+    return this.buildings.get(z) || [];
   }
 }

@@ -11,6 +11,10 @@ import { DESIG_STYLE, DESIG_FALLBACK } from "./designations.js";
 
 const CELL = 16; // px per tile in the offscreen map cache (blitted scaled to the live zoom)
 
+// Generic building accent palette indices, cycled by building type so distinct types read
+// differently. Per-type glyphs/colours arrive with the build palette (buildings.js).
+const BUILDING_ACCENT = [3, 5, 6, 9, 10, 11, 12, 13];
+
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -157,6 +161,35 @@ export class Renderer {
         const gy = sy + cell / 2 + 1;
         ctx.strokeText(g, gx, gy);
         ctx.fillText(g, gx, gy);
+      }
+    }
+
+    // Buildings on this z-level: a faint footprint tint + border, a glyph at the centre. Dimmed
+    // when the building isn't active yet (just placed / under construction). Generic styling for
+    // now — per-type glyphs arrive with the build palette.
+    const blds = world.buildingsOnZ ? world.buildingsOnZ(cam.z) : [];
+    if (blds.length) {
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `${Math.floor(cell * 0.8)}px "Cascadia Mono","Consolas","DejaVu Sans Mono",monospace`;
+      for (const b of blds) {
+        const bx = (b.x0 - cam.x) * cell;
+        const by = (b.y0 - cam.y) * cell;
+        const bw = (b.x1 - b.x0 + 1) * cell;
+        const bh = (b.y1 - b.y0 + 1) * cell;
+        if (bx > W || by > H || bx + bw < 0 || by + bh < 0) continue;
+        const accent = PALETTE[BUILDING_ACCENT[(b.bt >>> 0) % BUILDING_ACCENT.length]];
+        ctx.fillStyle = accent;
+        ctx.globalAlpha = b.active ? 0.22 : 0.12;
+        ctx.fillRect(bx, by, bw, bh);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+        ctx.fillStyle = accent;
+        ctx.globalAlpha = b.active ? 1 : 0.6;
+        ctx.fillText("⌂", bx + bw / 2, by + bh / 2 + 1);
+        ctx.globalAlpha = 1;
       }
     }
 

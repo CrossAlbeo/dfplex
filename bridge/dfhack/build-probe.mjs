@@ -143,5 +143,25 @@ end
   }
 }
 
+if (args.includes("--readbuildings")) {
+  console.log("\n[5] Read buildings from GetBlockList at the view z (confirms the read path's data):");
+  const z = view.view_pos_z;
+  const bl = await client.call("GetBlockList", {
+    blocks_needed: info.block_size_x * info.block_size_y + 8,
+    min_x: 0, max_x: info.block_size_x, min_y: 0, max_y: info.block_size_y,
+    min_z: z, max_z: z + 1, force_reload: true,
+  });
+  const seen = new Map();
+  for (const b of bl.map_blocks || []) for (const bd of b.buildings || []) if (!seen.has(bd.index)) seen.set(bd.index, bd);
+  console.log(`  unique buildings on z=${z}: ${seen.size}`);
+  for (const s of [...seen.values()].slice(0, 10)) {
+    const t = s.building_type || {};
+    console.log(
+      `    idx=${s.index} type=${t.building_type}/${t.building_subtype}/${t.building_custom} ` +
+        `box=(${s.pos_x_min},${s.pos_y_min})-(${s.pos_x_max},${s.pos_y_max}) active=${s.active}`
+    );
+  }
+}
+
 client.quit();
 console.log("\ndone.");

@@ -133,10 +133,19 @@ export function buildWorld(seed = 1234) {
     });
   }
 
+  // A few buildings so the client renders them without DF: a workshop + a pending bed on the
+  // surface (visible immediately), and a workshop in the top underground room.
+  const buildings = [
+    { i: 1, z: Z_SURFACE, x0: 14, y0: 14, x1: 16, y1: 16, bt: 13, st: 0, active: 1 },
+    { i: 2, z: Z_SURFACE, x0: 18, y0: 14, x1: 18, y1: 14, bt: 1, st: -1, active: 0 },
+    { i: 3, z: Z_SURFACE - 1, x0: 5, y0: 5, x1: 7, y1: 7, bt: 13, st: 0, active: 1 },
+  ];
+
   return {
     map: { xCount: X, yCount: Y, zCount: Z, zSurface: Z_SURFACE },
     levels,
     units,
+    buildings,
     _rand: rand,
   };
 }
@@ -198,6 +207,14 @@ export class MockSource extends DataSource {
       });
     }
     this._emitUnits();
+
+    // Buildings are static in the mock: emit once per z that has any.
+    const byZ = new Map();
+    for (const b of this.world.buildings || []) {
+      if (!byZ.has(b.z)) byZ.set(b.z, []);
+      byZ.get(b.z).push(b);
+    }
+    for (const [z, list] of byZ) this._emit({ type: S2C.BUILDINGS, z, list });
 
     if (typeof setInterval === "function") {
       this._timer = setInterval(() => this.step(), this.tickMs);

@@ -101,7 +101,28 @@ export class DFAccess {
     });
 
     const desig = []; // sparse dig designations on this level: { x, y, d }
+    const buildings = []; // deduped building footprints intersecting this level
+    const seenBld = new Set();
     for (const b of bl.map_blocks || []) {
+      // Buildings ride along on the block list (MapBlock.buildings); collect once per index.
+      for (const bd of b.buildings || []) {
+        if (seenBld.has(bd.index)) continue;
+        const zmin = bd.pos_z_min ?? z;
+        const zmax = bd.pos_z_max ?? z;
+        if (z < zmin || z > zmax) continue;
+        seenBld.add(bd.index);
+        const t = bd.building_type || {};
+        buildings.push({
+          i: bd.index,
+          x0: bd.pos_x_min | 0,
+          y0: bd.pos_y_min | 0,
+          x1: bd.pos_x_max | 0,
+          y1: bd.pos_y_max | 0,
+          bt: t.building_type ?? -1,
+          st: t.building_subtype ?? -1,
+          active: bd.active ? 1 : 0,
+        });
+      }
       const bt = b.tiles;
       if (!bt || !bt.length) continue;
       const ox = b.map_x; // tile coords of the block's corner
@@ -132,7 +153,7 @@ export class DFAccess {
     for (let i = 0; i < tiles.length; i++) {
       hash = Math.imul((hash ^ tiles[i]) >>> 0, 0x01000193) >>> 0;
     }
-    return { z, w: W, h: H, tiles: Array.from(tiles), hash, desig };
+    return { z, w: W, h: H, tiles: Array.from(tiles), hash, desig, buildings };
   }
 
   /** Visible on-map units as client unit dicts. */

@@ -63,6 +63,17 @@ designations and dwarves finishing a dig both show up. The client draws these as
 { "type": "desig", "z": 3, "list": [ { "x": 10, "y": 12, "d": 1 } ] }
 ```
 
+### `buildings`
+Building footprints on a z-level, re-sent per active z each tick (like `desig`), so placements and
+completions show up. Each entry is a rectangle (`x0,y0`–`x1,y1`) carrying the DF building
+type/subtype (`bt`/`st`, raw enum ids — the client maps these to glyphs) and `active` (1 once
+built/functional, 0 while placed/under construction). `i` is the DF building index (a stable id).
+```jsonc
+{ "type": "buildings", "z": 3, "list": [
+  { "i": 7, "x0": 10, "y0": 12, "x1": 12, "y1": 14, "bt": 13, "st": 0, "active": 0 }
+] }
+```
+
 ### `tick`
 Heartbeat / animation pulse. Lets the client show liveness and drive non-rAF animation.
 ```jsonc
