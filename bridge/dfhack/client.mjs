@@ -22,6 +22,11 @@ export const METHODS = {
   GetUnitList: { input: "dfproto.EmptyMessage", output: "RemoteFortressReader.UnitList", plugin: "RemoteFortressReader" },
   GetViewInfo: { input: "dfproto.EmptyMessage", output: "RemoteFortressReader.ViewInfo", plugin: "RemoteFortressReader" },
   SendDigCommand: { input: "RemoteFortressReader.DigCommand", output: "dfproto.EmptyMessage", plugin: "RemoteFortressReader" },
+  // Core methods (empty plugin): the only mutation channel for things RFR can't do (e.g. placing
+  // buildings). RunCommand runs a DFHack console command (output arrives as REPLY_TEXT); RunLua
+  // calls module.function(args...) and returns its results as a StringListMessage.
+  RunCommand: { input: "dfproto.CoreRunCommandRequest", output: "dfproto.EmptyMessage", plugin: "" },
+  RunLua: { input: "dfproto.CoreRunLuaRequest", output: "dfproto.StringListMessage", plugin: "" },
 };
 
 export class DFHackClient {

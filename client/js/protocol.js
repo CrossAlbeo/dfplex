@@ -10,6 +10,7 @@ export const S2C = Object.freeze({
   MAP: "map",
   UNITS: "units",
   DESIG: "desig",
+  BUILDINGS: "buildings",
   TICK: "tick",
   CHAT: "chat",
   PRESENCE: "presence",

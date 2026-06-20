@@ -5,6 +5,7 @@
 import { DFHackClient } from "./client.mjs";
 import { buildTileTable } from "./tiles.mjs";
 import { TILE } from "../../client/js/protocol.js";
+import { BUILD_BY_KIND } from "../../client/js/buildings.js";
 
 // dfplex command kind -> RFR TileDigDesignation enum value.
 const DESIGNATIONS = {
@@ -101,7 +102,28 @@ export class DFAccess {
     });
 
     const desig = []; // sparse dig designations on this level: { x, y, d }
+    const buildings = []; // deduped building footprints intersecting this level
+    const seenBld = new Set();
     for (const b of bl.map_blocks || []) {
+      // Buildings ride along on the block list (MapBlock.buildings); collect once per index.
+      for (const bd of b.buildings || []) {
+        if (seenBld.has(bd.index)) continue;
+        const zmin = bd.pos_z_min ?? z;
+        const zmax = bd.pos_z_max ?? z;
+        if (z < zmin || z > zmax) continue;
+        seenBld.add(bd.index);
+        const t = bd.building_type || {};
+        buildings.push({
+          i: bd.index,
+          x0: bd.pos_x_min | 0,
+          y0: bd.pos_y_min | 0,
+          x1: bd.pos_x_max | 0,
+          y1: bd.pos_y_max | 0,
+          bt: t.building_type ?? -1,
+          st: t.building_subtype ?? -1,
+          active: bd.active ? 1 : 0,
+        });
+      }
       const bt = b.tiles;
       if (!bt || !bt.length) continue;
       const ox = b.map_x; // tile coords of the block's corner
@@ -132,7 +154,7 @@ export class DFAccess {
     for (let i = 0; i < tiles.length; i++) {
       hash = Math.imul((hash ^ tiles[i]) >>> 0, 0x01000193) >>> 0;
     }
-    return { z, w: W, h: H, tiles: Array.from(tiles), hash, desig };
+    return { z, w: W, h: H, tiles: Array.from(tiles), hash, desig, buildings };
   }
 
   /** Visible on-map units as client unit dicts. */
@@ -163,6 +185,45 @@ export class DFAccess {
       designation,
       locations: tiles.map((t) => ({ x: t.x, y: t.y, z: t.z })),
     });
+  }
+
+  /**
+   * Place buildings of `kind` (a build-palette key) at each of `tiles` via DFHack's Lua building
+   * API. RFR has no building RPC, so this runs `dfhack.buildings.constructBuilding` through the
+   * core RunCommand("lua", ...) channel. With no items, DFHack derives default material filters,
+   * so dwarves haul any matching stone/wood. The building type/subtype come from the trusted
+   * palette (never client input); coordinates are coerced to integers — nothing client-controlled
+   * is interpolated as code.
+   */
+  async build(kind, tiles) {
+    await this.connect();
+    const order = BUILD_BY_KIND[kind];
+    if (!order) throw new Error(`unknown build kind: ${kind}`);
+    if (!tiles || !tiles.length) return;
+    const ps = tiles
+      .filter((t) => Number.isFinite(t.x) && Number.isFinite(t.y) && Number.isFinite(t.z))
+      .map((t) => `{x=${t.x | 0},y=${t.y | 0},z=${t.z | 0}}`)
+      .join(",");
+    if (!ps) return;
+    // Subtype + direction come only from the trusted palette (never client input). Keep them as
+    // numeric DF enum values so they double as getCorrectSize args below; -1 means "none".
+    const st = order.subEnum ? `df.${order.subEnum}.${order.subName}` : "-1";
+    const dr = Number.isInteger(order.dir) ? String(order.dir) : "-1";
+    // Center each building on the clicked tile. constructBuilding takes `pos` as the top-left corner,
+    // so first ask DFHack for this building's footprint: getCorrectSize returns
+    // (is_flexible, w, h, centerx, centery), where center{x,y} is the centre tile's offset from the
+    // corner; shifting the corner back by it lands the centre on the click. 1×1 buildings (and
+    // constructions, which place one tile each) have offset 0, so they stay on the clicked tile.
+    const code =
+      `local ps={${ps}} local bt=df.building_type.${order.btype} local st=${st} local dr=${dr} ` +
+      `local placed,err=0,nil ` +
+      `for _,p in ipairs(ps) do ` +
+      `local _,_,_,cx,cy=dfhack.buildings.getCorrectSize(1,1,bt,st,-1,dr) cx=cx or 0 cy=cy or 0 ` +
+      `local a={type=bt,pos={x=p.x-cx,y=p.y-cy,z=p.z}} ` +
+      `if st>=0 then a.subtype=st end if dr>=0 then a.direction=dr end ` +
+      `local ok,b=pcall(dfhack.buildings.constructBuilding,a) if ok and b then placed=placed+1 else err=tostring(b) end end ` +
+      `print('dfplex build ${kind} placed='..placed..(err and (' err='..err) or ''))`;
+    await this.client.call("RunCommand", { command: "lua", arguments: [code] });
   }
 }
 

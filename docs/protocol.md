@@ -63,6 +63,17 @@ designations and dwarves finishing a dig both show up. The client draws these as
 { "type": "desig", "z": 3, "list": [ { "x": 10, "y": 12, "d": 1 } ] }
 ```
 
+### `buildings`
+Building footprints on a z-level, re-sent per active z each tick (like `desig`), so placements and
+completions show up. Each entry is a rectangle (`x0,y0`–`x1,y1`) carrying the DF building
+type/subtype (`bt`/`st`, raw enum ids — the client maps these to glyphs) and `active` (1 once
+built/functional, 0 while placed/under construction). `i` is the DF building index (a stable id).
+```jsonc
+{ "type": "buildings", "z": 3, "list": [
+  { "i": 7, "x0": 10, "y0": 12, "x1": 12, "y1": 14, "bt": 13, "st": 0, "active": 0 }
+] }
+```
+
 ### `tick`
 Heartbeat / animation pulse. Lets the client show liveness and drive non-rAF animation.
 ```jsonc
@@ -107,9 +118,25 @@ This is per-client and is the mechanism behind independent views.
 ```
 
 ### `command`  *(Phase 2+)*
-Mutates game state. `op` selects the handler; remaining fields are op-specific.
+Mutates game state. `op` selects the handler; remaining fields are op-specific. `kind` is always a
+**known key**, never free text — the server maps it to a trusted designation/building enum, so no
+client-supplied string is ever interpolated into a DF command. `tiles` is a list of `{x,y,z}`.
+
+`op: "designate"` — apply a dig designation. `kind` ∈ `dig`, `updownstair`, `channel`, `ramp`,
+`downstair`, `upstair`, `remove` (clears the designation).
 ```jsonc
 { "type": "command", "op": "designate", "kind": "dig",
+  "tiles": [ { "x": 10, "y": 12, "z": 3 } ] }
+```
+
+`op: "build"` — place buildings. `kind` is a build-palette key from `buildings.js` (e.g. `c_wall`,
+`w_mason`, `f_smelter`, `fu_bed`, `depot`); the server resolves it to a DF `building_type` (+ subtype,
++ direction) and calls `dfhack.buildings.constructBuilding` at each tile with no items, so DF derives
+default material filters and dwarves haul matching stone/wood. Construction kinds (`c_*`) stamp one
+building per tile across the dragged rectangle; every other kind places a single building per tile,
+auto-sizing multi-tile footprints (3×3 workshop, 5×5 depot) outward from that anchor.
+```jsonc
+{ "type": "command", "op": "build", "kind": "w_mason",
   "tiles": [ { "x": 10, "y": 12, "z": 3 } ] }
 ```
 

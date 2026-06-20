@@ -8,6 +8,7 @@
 
 import { PALETTE, tiledict, UNIT_DEFAULT } from "./tiledict.js";
 import { DESIG_STYLE, DESIG_FALLBACK } from "./designations.js";
+import { styleFor } from "./buildings.js";
 
 const CELL = 16; // px per tile in the offscreen map cache (blitted scaled to the live zoom)
 
@@ -157,6 +158,36 @@ export class Renderer {
         const gy = sy + cell / 2 + 1;
         ctx.strokeText(g, gx, gy);
         ctx.fillText(g, gx, gy);
+      }
+    }
+
+    // Buildings on this z-level: a faint footprint tint + border, a per-type glyph at the centre.
+    // Dimmed when the building isn't active yet (just placed / under construction). The glyph and
+    // accent come from buildings.js styleFor(building_type).
+    const blds = world.buildingsOnZ ? world.buildingsOnZ(cam.z) : [];
+    if (blds.length) {
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `${Math.floor(cell * 0.8)}px "Cascadia Mono","Consolas","DejaVu Sans Mono",monospace`;
+      for (const b of blds) {
+        const bx = (b.x0 - cam.x) * cell;
+        const by = (b.y0 - cam.y) * cell;
+        const bw = (b.x1 - b.x0 + 1) * cell;
+        const bh = (b.y1 - b.y0 + 1) * cell;
+        if (bx > W || by > H || bx + bw < 0 || by + bh < 0) continue;
+        const style = styleFor(b.bt);
+        const accent = style.a;
+        ctx.fillStyle = accent;
+        ctx.globalAlpha = b.active ? 0.22 : 0.12;
+        ctx.fillRect(bx, by, bw, bh);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+        ctx.fillStyle = accent;
+        ctx.globalAlpha = b.active ? 1 : 0.6;
+        ctx.fillText(style.g, bx + bw / 2, by + bh / 2 + 1);
+        ctx.globalAlpha = 1;
       }
     }
 
