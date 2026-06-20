@@ -8,12 +8,9 @@
 
 import { PALETTE, tiledict, UNIT_DEFAULT } from "./tiledict.js";
 import { DESIG_STYLE, DESIG_FALLBACK } from "./designations.js";
+import { styleFor } from "./buildings.js";
 
 const CELL = 16; // px per tile in the offscreen map cache (blitted scaled to the live zoom)
-
-// Generic building accent palette indices, cycled by building type so distinct types read
-// differently. Per-type glyphs/colours arrive with the build palette (buildings.js).
-const BUILDING_ACCENT = [3, 5, 6, 9, 10, 11, 12, 13];
 
 export class Renderer {
   constructor(canvas) {
@@ -164,9 +161,9 @@ export class Renderer {
       }
     }
 
-    // Buildings on this z-level: a faint footprint tint + border, a glyph at the centre. Dimmed
-    // when the building isn't active yet (just placed / under construction). Generic styling for
-    // now — per-type glyphs arrive with the build palette.
+    // Buildings on this z-level: a faint footprint tint + border, a per-type glyph at the centre.
+    // Dimmed when the building isn't active yet (just placed / under construction). The glyph and
+    // accent come from buildings.js styleFor(building_type).
     const blds = world.buildingsOnZ ? world.buildingsOnZ(cam.z) : [];
     if (blds.length) {
       ctx.textAlign = "center";
@@ -178,7 +175,8 @@ export class Renderer {
         const bw = (b.x1 - b.x0 + 1) * cell;
         const bh = (b.y1 - b.y0 + 1) * cell;
         if (bx > W || by > H || bx + bw < 0 || by + bh < 0) continue;
-        const accent = PALETTE[BUILDING_ACCENT[(b.bt >>> 0) % BUILDING_ACCENT.length]];
+        const style = styleFor(b.bt);
+        const accent = style.a;
         ctx.fillStyle = accent;
         ctx.globalAlpha = b.active ? 0.22 : 0.12;
         ctx.fillRect(bx, by, bw, bh);
@@ -188,7 +186,7 @@ export class Renderer {
         ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
         ctx.fillStyle = accent;
         ctx.globalAlpha = b.active ? 1 : 0.6;
-        ctx.fillText("⌂", bx + bw / 2, by + bh / 2 + 1);
+        ctx.fillText(style.g, bx + bw / 2, by + bh / 2 + 1);
         ctx.globalAlpha = 1;
       }
     }

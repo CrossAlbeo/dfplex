@@ -206,9 +206,12 @@ export class DFAccess {
       .join(",");
     if (!ps) return;
     const sub = order.subEnum ? `a.subtype=df.${order.subEnum}.${order.subName}` : "";
+    // Directional machines (axles, screw pumps, water wheels, rollers) carry an integer dir from the
+    // palette. btype/subName/dir all come from the trusted palette — never from client input.
+    const dir = Number.isInteger(order.dir) ? `a.direction=${order.dir}` : "";
     const code =
       `local ps={${ps}} local bt=df.building_type.${order.btype} local placed,err=0,nil ` +
-      `for _,p in ipairs(ps) do local a={type=bt,pos=p} ${sub} ` +
+      `for _,p in ipairs(ps) do local a={type=bt,pos=p} ${sub} ${dir} ` +
       `local ok,b=pcall(dfhack.buildings.constructBuilding,a) if ok and b then placed=placed+1 else err=tostring(b) end end ` +
       `print('dfplex build ${kind} placed='..placed..(err and (' err='..err) or ''))`;
     await this.client.call("RunCommand", { command: "lua", arguments: [code] });
