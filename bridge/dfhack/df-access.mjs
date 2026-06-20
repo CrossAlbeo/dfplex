@@ -7,7 +7,15 @@ import { buildTileTable } from "./tiles.mjs";
 import { TILE } from "../../client/js/protocol.js";
 
 // dfplex command kind -> RFR TileDigDesignation enum value.
-const DESIGNATIONS = { dig: 1, stair: 2, channel: 3, ramp: 4, downstair: 5, upstair: 6, remove: 0 };
+const DESIGNATIONS = {
+  dig: 1, // DEFAULT_DIG
+  updownstair: 2, // UP_DOWN_STAIR_DIG
+  channel: 3, // CHANNEL_DIG
+  ramp: 4, // RAMP_DIG
+  downstair: 5, // DOWN_STAIR_DIG
+  upstair: 6, // UP_STAIR_DIG
+  remove: 0, // NO_DIG (clears a designation)
+};
 
 export class DFAccess {
   constructor(opts = {}) {
