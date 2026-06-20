@@ -71,14 +71,138 @@ body {
   color: var(--muted);
 }
 
-#hud {
+#bottom {
   position: fixed;
   left: 0;
+  right: 0;
   bottom: 0;
   z-index: 10;
+}
+
+#hud {
   padding: 4px 10px;
   background: rgba(22, 22, 22, 0.85);
   border-top: 1px solid #2a2a2a;
   color: var(--muted);
   white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#orderbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: stretch;
+  justify-content: center;
+  padding: 6px 10px;
+  background: rgba(16, 16, 16, 0.95);
+  border-top: 1px solid #2a2a2a;
+}
+
+#orderbar.hidden {
+  display: none;
+}
+
+#menubar {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(16, 16, 16, 0.97);
+  border-top: 1px solid #2a2a2a;
+}
+
+.category {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: #141414;
+  color: var(--ink);
+  border: 1px solid #333;
+  border-bottom: 3px solid var(--order-accent, #e89628);
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+  user-select: none;
+}
+
+.category:hover {
+  background: #1c1c1c;
+}
+
+.category.active {
+  background: #222;
+  border-color: var(--order-accent, #555);
+  box-shadow: inset 0 0 0 1px var(--order-accent, #555);
+}
+
+.category .cat-glyph {
+  font-size: 16px;
+  line-height: 1;
+  color: var(--order-accent, #ddd);
+}
+
+.category .cat-label {
+  font-size: 12px;
+}
+
+.category .cat-current {
+  font-size: 12px;
+  color: var(--order-accent, #ddd);
+}
+
+.category .cat-caret {
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: 2px;
+}
+
+.order {
+  min-width: 66px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px 3px;
+  background: #111;
+  color: var(--ink);
+  border: 1px solid #333;
+  border-bottom: 3px solid var(--order-accent, #333);
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+  user-select: none;
+}
+
+.order:hover {
+  background: #1a1a1a;
+}
+
+.order.active {
+  background: #222;
+  border-color: var(--order-accent, #555);
+  box-shadow: inset 0 0 0 1px var(--order-accent, #555);
+}
+
+.order .glyph {
+  font-size: 16px;
+  font-weight: bold;
+  line-height: 1.1;
+  color: var(--order-accent, #ddd);
+}
+
+.order .label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.order.active .label {
+  color: var(--ink);
+}
+
+.order .key {
+  font-size: 10px;
+  color: #555;
 }
