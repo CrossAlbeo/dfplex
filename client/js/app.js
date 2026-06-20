@@ -17,6 +17,13 @@ const wsUrl = document.getElementById("wsurl");
 const connectBtn = document.getElementById("connect");
 const orderbar = document.getElementById("orderbar");
 const menubar = document.getElementById("menubar");
+const nickInput = document.getElementById("nick");
+const chat = document.getElementById("chat");
+const chathead = document.getElementById("chathead");
+const chatlog = document.getElementById("chatlog");
+const chatform = document.getElementById("chatform");
+const chatinput = document.getElementById("chatinput");
+const onlineEl = document.getElementById("online");
 
 const cam = new Camera();
 const renderer = new Renderer(view);
@@ -89,6 +96,65 @@ function setMenuOpen(open) {
 setMenuOpen(false);
 setOrder(currentOrder);
 
+// ---- chat + presence: the one cross-client channel (the bridge hub broadcasts these to all) ----
+const savedNick = localStorage.getItem("dfplex.nick") || `Player-${Math.floor(1000 + Math.random() * 9000)}`;
+nickInput.value = savedNick;
+nickInput.addEventListener("change", () => {
+  const n = nickInput.value.trim();
+  if (n) localStorage.setItem("dfplex.nick", n);
+  if (source && source.running) source.send({ type: C2S.JOIN, nick: n }); // live rename
+});
+
+function addChat({ kind, from, text, ts }) {
+  // Keep the view pinned to the newest line only if the user is already at the bottom.
+  const atBottom = chatlog.scrollHeight - chatlog.scrollTop - chatlog.clientHeight < 4;
+  const line = document.createElement("div");
+  line.className = "msg";
+  const d = new Date(ts || Date.now());
+  line.append(mkSpan("time", `${`${d.getHours()}`.padStart(2, "0")}:${`${d.getMinutes()}`.padStart(2, "0")}`));
+  if (kind === "system") {
+    line.append(mkSpan("sys", text));
+  } else {
+    line.append(mkSpan("from", `${from}: `));
+    const body = document.createElement("span");
+    body.textContent = text; // textContent, never innerHTML: chat is never interpreted as markup
+    line.append(body);
+  }
+  chatlog.append(line);
+  while (chatlog.children.length > 200) chatlog.firstChild.remove();
+  if (atBottom) chatlog.scrollTop = chatlog.scrollHeight;
+}
+
+function setPresence(list) {
+  onlineEl.textContent = `online: ${list.length}`;
+  onlineEl.title = list.map((p) => p.nick).join(", ");
+}
+
+chatform.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = chatinput.value;
+  chatinput.value = "";
+  if (!text.trim()) {
+    chatinput.blur();
+    return;
+  }
+  if (source && source.running) source.send({ type: C2S.CHAT, text });
+  else addChat({ kind: "system", text: "(not connected — chat needs the WebSocket source)" });
+});
+
+chatinput.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    chatinput.blur();
+    e.preventDefault();
+  }
+  e.stopPropagation(); // typing in chat must never drive the map/keyboard controls
+});
+
+chathead.addEventListener("click", () => {
+  const collapsed = chat.classList.toggle("collapsed");
+  document.getElementById("chattoggle").textContent = collapsed ? "▸" : "▾";
+});
+
 // Render-on-demand: the loop only repaints when something changed (data, camera, or cursor),
 // so an idle view costs nothing instead of re-drawing the map 60x/second.
 let needsDraw = true;
@@ -104,10 +170,19 @@ function connect() {
   const kind = sourceSel.value;
   source =
     kind === "ws"
-      ? new WebSocketSource(wsUrl.value, "Web")
+      ? new WebSocketSource(wsUrl.value, nickInput.value.trim() || "Player")
       : new MockSource({ tickMs: 120 });
 
   source.onMessage((m) => {
+    // Chat + presence are UI-only and cross-client; handle them before the world model.
+    if (m.type === S2C.CHAT) {
+      addChat(m);
+      return;
+    }
+    if (m.type === S2C.PRESENCE) {
+      setPresence(m.list || []);
+      return;
+    }
     world.apply(m);
     if (m.type === S2C.MAP) renderer.invalidateMap();
     if (m.type === S2C.HELLO) {
@@ -222,6 +297,11 @@ view.addEventListener(
 
 window.addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement) return;
+  if (e.key === "Enter") {
+    chatinput.focus(); // jump to chat from the map, like an in-game chat key
+    e.preventDefault();
+    return;
+  }
   if (e.key === "Escape" && menuOpen) {
     setMenuOpen(false);
     e.preventDefault();

@@ -13,8 +13,10 @@ import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { MockSource } from "../client/js/mock.js";
+import { C2S } from "../client/js/protocol.js";
 import { DFAccess } from "./dfhack/df-access.mjs";
 import { RFRSource } from "./rfr-source.mjs";
+import { ChatHub } from "./chat-hub.mjs";
 
 const CLIENT_ROOT = resolve(fileURLToPath(new URL("../client/", import.meta.url)));
 const PORT = Number(process.env.PORT) || 8080;
@@ -26,6 +28,14 @@ const df = new DFAccess({
   port: Number(process.env.DF_PORT) || 5000,
 });
 const forceMock = process.env.DFPLEX_SOURCE === "mock";
+// Optional artificial per-connection setup latency (ms). Models a slow DF connect so tests can
+// deterministically exercise the path where client input arrives before the source is ready.
+// 0 (the default) in all normal use.
+const setupDelayMs = Number(process.env.DFPLEX_SETUP_DELAY_MS) || 0;
+
+// One hub across all connections carries chat + presence — the only cross-client channel. The
+// map/units feed stays per-connection and isolated, which is exactly the independent-view model.
+const hub = new ChatHub();
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -70,8 +80,51 @@ httpServer.on("upgrade", (req, socket, head) => {
 });
 
 wss.on("connection", async (ws) => {
-  // One independent data source per client — exactly the multiplayer model.
+  // Register with the chat hub up front, so this peer can chat even before — or entirely without —
+  // a DF connection (chat works in mock mode too).
+  const peer = hub.add((msg) => {
+    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
+  });
+
+  // The client sends its `join` on open as the very first frame. We must subscribe to messages
+  // *synchronously*, before the await for `df.connect()` below — otherwise that join lands in the
+  // async gap, is emitted to no listener, and is lost, leaving the peer nick-less and its chat
+  // attributed to "?". Source-bound input that arrives before the (possibly async) source exists is
+  // buffered here and flushed in order once it does; chat/join go straight to the hub, which never
+  // depends on the source.
   let source = null;
+  let closed = false;
+  let unsub = () => {};
+  const pending = [];
+
+  ws.on("message", (data) => {
+    let msg;
+    try {
+      msg = JSON.parse(data.toString());
+    } catch {
+      return;
+    }
+    // Chat + presence are cross-client: route them through the hub, not the per-client source.
+    if (msg.type === C2S.CHAT) {
+      hub.chat(peer, msg.text);
+      return;
+    }
+    if (msg.type === C2S.JOIN) hub.join(peer, msg.nick);
+    // join (sets the source's own nick) / viewport / command — queued until the source is ready.
+    if (source) source.send(msg);
+    else pending.push(msg);
+  });
+
+  ws.on("close", () => {
+    closed = true;
+    hub.remove(peer);
+    if (source) source.stop();
+    unsub();
+  });
+
+  if (setupDelayMs) await new Promise((r) => setTimeout(r, setupDelayMs));
+
+  // One independent data source per client — exactly the multiplayer model.
   if (!forceMock) {
     try {
       await df.connect(); // confirm DF is reachable before committing this client to RFR
@@ -82,24 +135,20 @@ wss.on("connection", async (ws) => {
   }
   if (!source) source = new MockSource({ tickMs: 120 });
 
-  const unsub = source.onMessage((msg) => {
+  if (closed) {
+    // The socket dropped while we were connecting to DF; nothing left to wire up.
+    source.stop();
+    return;
+  }
+
+  unsub = source.onMessage((msg) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
   });
 
-  ws.on("message", (data) => {
-    let msg;
-    try {
-      msg = JSON.parse(data.toString());
-    } catch {
-      return;
-    }
-    source.send(msg); // join / viewport (command lands in Phase 2)
-  });
-
-  ws.on("close", () => {
-    source.stop();
-    unsub();
-  });
+  // Replay anything the client sent before the source existed (its join, an early viewport), in
+  // order, so the source sees them before its first read.
+  for (const msg of pending) source.send(msg);
+  pending.length = 0;
 
   Promise.resolve(source.start()).catch((e) => {
     console.warn(`[bridge] source.start failed: ${e.message}`);

@@ -12,6 +12,7 @@ export const S2C = Object.freeze({
   DESIG: "desig",
   TICK: "tick",
   CHAT: "chat",
+  PRESENCE: "presence",
   ERROR: "error",
 });
 
@@ -20,6 +21,7 @@ export const C2S = Object.freeze({
   JOIN: "join",
   VIEWPORT: "viewport",
   COMMAND: "command",
+  CHAT: "chat",
 });
 
 /** Tile shape codes. Data sources emit these; the client maps them to glyphs/colors. */
