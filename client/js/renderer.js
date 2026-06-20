@@ -10,6 +10,19 @@ import { PALETTE, tiledict, UNIT_DEFAULT } from "./tiledict.js";
 
 const CELL = 16; // px per tile in the offscreen map cache (blitted scaled to the live zoom)
 
+// Designation kind (RFR TileDigDesignation) -> tint color + overlay glyph. Each type gets a
+// distinct hue so a change (e.g. dig -> down-stair) is obvious at a glance, and the glyph is
+// drawn bright with a dark outline so it stays legible over any tile.
+const DESIG_STYLE = {
+  1: { fill: "rgba(232,150,40,0.40)", glyph: "" },   // dig (no glyph, the orange tint is the mark)
+  2: { fill: "rgba(210,90,210,0.45)", glyph: "X" },  // up/down stair
+  3: { fill: "rgba(60,185,220,0.45)", glyph: "↓" },  // channel
+  4: { fill: "rgba(110,205,90,0.45)", glyph: "▲" },  // ramp
+  5: { fill: "rgba(80,140,235,0.48)", glyph: ">" },  // down stair
+  6: { fill: "rgba(190,210,60,0.48)", glyph: "<" },  // up stair
+};
+const DESIG_FALLBACK = { fill: "rgba(232,201,58,0.34)", glyph: "?" };
+
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -125,15 +138,37 @@ export class Renderer {
       ctx.fillText(u.ch || UNIT_DEFAULT.ch, sx + cell / 2, sy + cell / 2 + 1);
     }
 
-    // Dig designations on this z-level (yellow tint over the tile).
+    // Dig designations on this z-level: a per-type colored tint, plus a high-contrast glyph for
+    // the stair/channel/ramp kinds. Color-coding makes a type change visible even where the
+    // glyph is small, so dig -> down-stair no longer looks identical.
     const desig = world.desigOnZ ? world.desigOnZ(cam.z) : [];
     if (desig.length) {
-      ctx.fillStyle = "rgba(232,201,58,0.30)";
+      // Pass 1: colored tints.
       for (const d of desig) {
         const sx = (d.x - cam.x) * cell;
         const sy = (d.y - cam.y) * cell;
         if (sx < -cell || sy < -cell || sx > W || sy > H) continue;
+        ctx.fillStyle = (DESIG_STYLE[d.d] || DESIG_FALLBACK).fill;
         ctx.fillRect(sx, sy, cell, cell);
+      }
+      // Pass 2: glyphs — bright fill with a dark outline so they read over any tile color.
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `bold ${Math.floor(cell * 0.8)}px "Cascadia Mono","Consolas","DejaVu Sans Mono",monospace`;
+      ctx.lineWidth = Math.max(1, cell * 0.12);
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(0,0,0,0.85)";
+      ctx.fillStyle = "#ffffff";
+      for (const d of desig) {
+        const g = (DESIG_STYLE[d.d] || DESIG_FALLBACK).glyph;
+        if (!g) continue;
+        const sx = (d.x - cam.x) * cell;
+        const sy = (d.y - cam.y) * cell;
+        if (sx < -cell || sy < -cell || sx > W || sy > H) continue;
+        const gx = sx + cell / 2;
+        const gy = sy + cell / 2 + 1;
+        ctx.strokeText(g, gx, gy);
+        ctx.fillText(g, gx, gy);
       }
     }
 
