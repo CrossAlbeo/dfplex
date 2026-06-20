@@ -7,21 +7,9 @@
 // and panning costs one drawImage instead of thousands of fillText calls.
 
 import { PALETTE, tiledict, UNIT_DEFAULT } from "./tiledict.js";
+import { DESIG_STYLE, DESIG_FALLBACK } from "./designations.js";
 
 const CELL = 16; // px per tile in the offscreen map cache (blitted scaled to the live zoom)
-
-// Designation kind (RFR TileDigDesignation) -> tint color + overlay glyph. Each type gets a
-// distinct hue so a change (e.g. dig -> down-stair) is obvious at a glance, and the glyph is
-// drawn bright with a dark outline so it stays legible over any tile.
-const DESIG_STYLE = {
-  1: { fill: "rgba(232,150,40,0.40)", glyph: "" },   // dig (no glyph, the orange tint is the mark)
-  2: { fill: "rgba(210,90,210,0.45)", glyph: "X" },  // up/down stair
-  3: { fill: "rgba(60,185,220,0.45)", glyph: "↓" },  // channel
-  4: { fill: "rgba(110,205,90,0.45)", glyph: "▲" },  // ramp
-  5: { fill: "rgba(80,140,235,0.48)", glyph: ">" },  // down stair
-  6: { fill: "rgba(190,210,60,0.48)", glyph: "<" },  // up stair
-};
-const DESIG_FALLBACK = { fill: "rgba(232,201,58,0.34)", glyph: "?" };
 
 export class Renderer {
   constructor(canvas) {
