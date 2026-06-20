@@ -15,7 +15,6 @@ export class RFRSource extends DataSource {
     this.frame = 0;
     this._timer = null;
     this._busy = false;
-    this._wantZ = null; // pending z-level requested via viewport
     this._sentHash = new Map(); // z -> last level hash sent to this client
   }
 
@@ -51,12 +50,17 @@ export class RFRSource extends DataSource {
     if (msg.type === C2S.JOIN && typeof msg.nick === "string") {
       this.nick = msg.nick;
     } else if (msg.type === C2S.VIEWPORT && Number.isInteger(msg.z)) {
-      if (msg.z !== this.activeZ) this._wantZ = msg.z; // applied on the next poll
+      this.activeZ = msg.z; // refresh this z from the next poll on (single event loop: safe to set now)
     } else if (msg.type === C2S.COMMAND && msg.op === "designate") {
       const tiles = Array.isArray(msg.tiles) ? msg.tiles : [];
       this.df
         .designate(msg.kind || "dig", tiles)
-        .then(() => this._streamZ(this.activeZ)) // reflect the new designation promptly
+        // Refresh exactly the z-level(s) we just mutated, regardless of activeZ, so the new
+        // designation always reaches this client — even when it designated right after changing z.
+        .then(() => {
+          const zs = tiles.length ? [...new Set(tiles.map((t) => t.z))] : [this.activeZ];
+          return Promise.all(zs.map((z) => this._streamZ(z)));
+        })
         .catch((e) => this._emit({ type: S2C.ERROR, message: `designate: ${e.message}` }));
     }
   }
@@ -65,10 +69,6 @@ export class RFRSource extends DataSource {
     if (this._busy || !this.running) return;
     this._busy = true;
     try {
-      if (this._wantZ != null) {
-        this.activeZ = this._wantZ;
-        this._wantZ = null;
-      }
       this.frame++;
       await this._streamZ(this.activeZ);
       await this._sendUnits();

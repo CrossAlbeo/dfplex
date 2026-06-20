@@ -19,7 +19,19 @@
       <input id="wsurl" type="text" value="ws://localhost:8080/ws" size="28" />
       <button id="connect">Connect</button>
       <span id="status">—</span>
-      <span class="help">drag/WASD pan · wheel zoom · Q/E change z</span>
+      <label>
+        designate
+        <select id="digkind">
+          <option value="dig">Dig</option>
+          <option value="channel">Channel (↓)</option>
+          <option value="upstair">Up stair (&lt;)</option>
+          <option value="downstair">Down stair (&gt;)</option>
+          <option value="updownstair">Up-down stair (X)</option>
+          <option value="ramp">Ramp (▲)</option>
+          <option value="remove">Remove</option>
+        </select>
+      </label>
+      <span class="help">drag/WASD pan · wheel zoom · Q/E change z · shift-drag designate</span>
     </div>
     <canvas id="view"></canvas>
     <div id="hud">—</div>

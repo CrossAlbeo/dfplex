@@ -14,6 +14,7 @@ const statusEl = document.getElementById("status");
 const sourceSel = document.getElementById("source");
 const wsUrl = document.getElementById("wsurl");
 const connectBtn = document.getElementById("connect");
+const digKindSel = document.getElementById("digkind");
 
 const cam = new Camera();
 const renderer = new Renderer(view);
@@ -105,8 +106,9 @@ window.addEventListener("mouseup", () => {
       for (let x = r.x0; x <= r.x1 && tiles.length < 4096; x++) tiles.push({ x, y, z: cam.z });
     }
     if (source && source.running && tiles.length) {
-      source.send({ type: C2S.COMMAND, op: "designate", kind: "dig", tiles });
-      setStatus(`designated ${tiles.length} tile(s) for digging`);
+      const kind = digKindSel.value;
+      source.send({ type: C2S.COMMAND, op: "designate", kind, tiles });
+      setStatus(`${kind}: ${tiles.length} tile(s)`);
     }
     invalidate();
   }
