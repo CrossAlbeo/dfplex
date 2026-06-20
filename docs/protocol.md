@@ -69,9 +69,20 @@ Heartbeat / animation pulse. Lets the client show liveness and drive non-rAF ani
 { "type": "tick", "frame": 12345, "fps": 50 }
 ```
 
-### `chat`  *(Phase 3)*
+### `chat`
+A chat line broadcast to **every** connected client — the bridge's hub is the only cross-client
+channel (the map/units feed stays per-connection). `kind` is `"user"` (a player line, carrying
+`from`) or `"system"` (join/leave/rename notices, no `from`). `ts` is Unix-epoch milliseconds.
 ```jsonc
-{ "type": "chat", "from": "Urist", "color": 14, "text": "dig here" }
+{ "type": "chat", "kind": "user", "from": "Urist", "text": "dig here", "ts": 1718900000000 }
+{ "type": "chat", "kind": "system", "text": "Urist joined", "ts": 1718900000000 }
+```
+
+### `presence`
+The current roster of joined clients, re-broadcast whenever someone joins, renames, or leaves.
+Drives the "online" count/list in each client.
+```jsonc
+{ "type": "presence", "list": [ { "id": "c1", "nick": "Urist" }, { "id": "c2", "nick": "Cog" } ] }
 ```
 
 ### `error`
@@ -100,6 +111,13 @@ Mutates game state. `op` selects the handler; remaining fields are op-specific.
 ```jsonc
 { "type": "command", "op": "designate", "kind": "dig",
   "tiles": [ { "x": 10, "y": 12, "z": 3 } ] }
+```
+
+### `chat`  *(Phase 3)*
+A line to broadcast to all clients. The server attributes it to this connection's nick and stamps
+the time, so the client sends only the text.
+```jsonc
+{ "type": "chat", "text": "dig here" }
 ```
 
 ## `TILE` shape codes

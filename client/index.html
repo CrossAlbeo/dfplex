@@ -17,6 +17,7 @@
         </select>
       </label>
       <input id="wsurl" type="text" value="ws://localhost:8080/ws" size="28" />
+      <label>nick <input id="nick" type="text" size="10" /></label>
       <button id="connect">Connect</button>
       <span id="status">—</span>
       <span class="help">L-drag designate · M-drag / WASD pan · wheel zoom · Q/E change z · 1–7 dig order · Esc close menu</span>
@@ -26,6 +27,13 @@
       <div id="hud">—</div>
       <div id="orderbar"></div>
       <div id="menubar"></div>
+    </div>
+    <div id="chat">
+      <div id="chathead"><span id="online">online: 0</span><span id="chattoggle">▾</span></div>
+      <div id="chatlog"></div>
+      <form id="chatform" autocomplete="off">
+        <input id="chatinput" type="text" maxlength="500" placeholder="press Enter to chat…" />
+      </form>
     </div>
     <script type="module" src="js/app.js"></script>
   </body>
