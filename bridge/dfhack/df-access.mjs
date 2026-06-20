@@ -205,13 +205,22 @@ export class DFAccess {
       .map((t) => `{x=${t.x | 0},y=${t.y | 0},z=${t.z | 0}}`)
       .join(",");
     if (!ps) return;
-    const sub = order.subEnum ? `a.subtype=df.${order.subEnum}.${order.subName}` : "";
-    // Directional machines (axles, screw pumps, water wheels, rollers) carry an integer dir from the
-    // palette. btype/subName/dir all come from the trusted palette — never from client input.
-    const dir = Number.isInteger(order.dir) ? `a.direction=${order.dir}` : "";
+    // Subtype + direction come only from the trusted palette (never client input). Keep them as
+    // numeric DF enum values so they double as getCorrectSize args below; -1 means "none".
+    const st = order.subEnum ? `df.${order.subEnum}.${order.subName}` : "-1";
+    const dr = Number.isInteger(order.dir) ? String(order.dir) : "-1";
+    // Center each building on the clicked tile. constructBuilding takes `pos` as the top-left corner,
+    // so first ask DFHack for this building's footprint: getCorrectSize returns
+    // (is_flexible, w, h, centerx, centery), where center{x,y} is the centre tile's offset from the
+    // corner; shifting the corner back by it lands the centre on the click. 1×1 buildings (and
+    // constructions, which place one tile each) have offset 0, so they stay on the clicked tile.
     const code =
-      `local ps={${ps}} local bt=df.building_type.${order.btype} local placed,err=0,nil ` +
-      `for _,p in ipairs(ps) do local a={type=bt,pos=p} ${sub} ${dir} ` +
+      `local ps={${ps}} local bt=df.building_type.${order.btype} local st=${st} local dr=${dr} ` +
+      `local placed,err=0,nil ` +
+      `for _,p in ipairs(ps) do ` +
+      `local _,_,_,cx,cy=dfhack.buildings.getCorrectSize(1,1,bt,st,-1,dr) cx=cx or 0 cy=cy or 0 ` +
+      `local a={type=bt,pos={x=p.x-cx,y=p.y-cy,z=p.z}} ` +
+      `if st>=0 then a.subtype=st end if dr>=0 then a.direction=dr end ` +
       `local ok,b=pcall(dfhack.buildings.constructBuilding,a) if ok and b then placed=placed+1 else err=tostring(b) end end ` +
       `print('dfplex build ${kind} placed='..placed..(err and (' err='..err) or ''))`;
     await this.client.call("RunCommand", { command: "lua", arguments: [code] });
