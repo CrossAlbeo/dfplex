@@ -5,6 +5,7 @@
 import { DFHackClient } from "./client.mjs";
 import { buildTileTable } from "./tiles.mjs";
 import { TILE } from "../../client/js/protocol.js";
+import { BUILD_BY_KIND } from "../../client/js/buildings.js";
 
 // dfplex command kind -> RFR TileDigDesignation enum value.
 const DESIGNATIONS = {
@@ -184,6 +185,33 @@ export class DFAccess {
       designation,
       locations: tiles.map((t) => ({ x: t.x, y: t.y, z: t.z })),
     });
+  }
+
+  /**
+   * Place buildings of `kind` (a build-palette key) at each of `tiles` via DFHack's Lua building
+   * API. RFR has no building RPC, so this runs `dfhack.buildings.constructBuilding` through the
+   * core RunCommand("lua", ...) channel. With no items, DFHack derives default material filters,
+   * so dwarves haul any matching stone/wood. The building type/subtype come from the trusted
+   * palette (never client input); coordinates are coerced to integers — nothing client-controlled
+   * is interpolated as code.
+   */
+  async build(kind, tiles) {
+    await this.connect();
+    const order = BUILD_BY_KIND[kind];
+    if (!order) throw new Error(`unknown build kind: ${kind}`);
+    if (!tiles || !tiles.length) return;
+    const ps = tiles
+      .filter((t) => Number.isFinite(t.x) && Number.isFinite(t.y) && Number.isFinite(t.z))
+      .map((t) => `{x=${t.x | 0},y=${t.y | 0},z=${t.z | 0}}`)
+      .join(",");
+    if (!ps) return;
+    const sub = order.subEnum ? `a.subtype=df.${order.subEnum}.${order.subName}` : "";
+    const code =
+      `local ps={${ps}} local bt=df.building_type.${order.btype} local placed,err=0,nil ` +
+      `for _,p in ipairs(ps) do local a={type=bt,pos=p} ${sub} ` +
+      `local ok,b=pcall(dfhack.buildings.constructBuilding,a) if ok and b then placed=placed+1 else err=tostring(b) end end ` +
+      `print('dfplex build ${kind} placed='..placed..(err and (' err='..err) or ''))`;
+    await this.client.call("RunCommand", { command: "lua", arguments: [code] });
   }
 }
 

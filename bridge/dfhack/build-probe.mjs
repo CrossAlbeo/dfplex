@@ -143,6 +143,18 @@ end
   }
 }
 
+if (args.includes("--enums")) {
+  console.log("\n[6] DF enum members (drives the build palette; results on stderr as [df] lines):");
+  const dump = (name) =>
+    `do local e=df.${name} local t={} for i=e._first_item,e._last_item do local n=e[i] if n then t[#t+1]=i..'='..tostring(n) end end print('PROBE enum ${name}: '..table.concat(t,',')) end`;
+  try {
+    await lua(["construction_type", "workshop_type", "furnace_type", "building_type", "trap_type"].map(dump).join("\n"));
+    console.log("  enum dump sent");
+  } catch (e) {
+    console.log("  enum dump FAILED:", e.message);
+  }
+}
+
 if (args.includes("--readbuildings")) {
   console.log("\n[5] Read buildings from GetBlockList at the view z (confirms the read path's data):");
   const z = view.view_pos_z;

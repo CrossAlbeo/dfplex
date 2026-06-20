@@ -62,6 +62,16 @@ export class RFRSource extends DataSource {
           return Promise.all(zs.map((z) => this._streamZ(z)));
         })
         .catch((e) => this._emit({ type: S2C.ERROR, message: `designate: ${e.message}` }));
+    } else if (msg.type === C2S.COMMAND && msg.op === "build") {
+      const tiles = Array.isArray(msg.tiles) ? msg.tiles : [];
+      this.df
+        .build(msg.kind, tiles)
+        // Refresh the z-level(s) we mutated so the new building reaches this client promptly.
+        .then(() => {
+          const zs = tiles.length ? [...new Set(tiles.map((t) => t.z))] : [this.activeZ];
+          return Promise.all(zs.map((z) => this._streamZ(z)));
+        })
+        .catch((e) => this._emit({ type: S2C.ERROR, message: `build: ${e.message}` }));
     }
   }
 

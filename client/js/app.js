@@ -8,6 +8,7 @@ import { Renderer } from "./renderer.js";
 import { MockSource } from "./mock.js";
 import { WebSocketSource } from "./websocketsource.js";
 import { ORDERS } from "./designations.js";
+import { BUILD_CATEGORIES } from "./buildings.js";
 
 const view = document.getElementById("view");
 const hud = document.getElementById("hud");
@@ -35,14 +36,22 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
-// ---- order menu: a single "Digging orders" category button along the bottom opens a submenu
-// of DF-style boxes (the individual designation tools). Mirrors DF's nested toolbar; modelled as
-// a category so build/zone/etc. categories can slot in alongside it later. ----
-const DIG_CATEGORY = { glyph: "⛏", label: "Digging orders", orders: ORDERS };
+// ---- order menu: a row of category buttons along the bottom (Digging orders, Construction, …);
+// clicking one opens its submenu of DF-style tool boxes. Each tool carries the op it sends
+// (designate vs build) and how it places (tileMode). Dig tools come from designations.js; build
+// categories from buildings.js. New build categories slot in with no UI changes. ----
+const DIG_ORDERS = ORDERS.map((o) => ({
+  op: "designate", kind: o.kind, label: o.label, glyph: o.glyph, accent: o.accent, hotkey: o.hotkey, tileMode: "rect",
+}));
+const CATEGORIES = [
+  { glyph: "⛏", label: "Digging orders", accent: "#e89628", orders: DIG_ORDERS },
+  ...BUILD_CATEGORIES,
+];
 
-let currentOrder = ORDERS[0].kind;
-let menuOpen = false;
-const orderButtons = new Map();
+let currentTool = DIG_ORDERS[0];
+let openCat = -1; // index of the category whose submenu is open, or -1 when collapsed
+const orderButtons = new Map(); // order object -> its submenu button (only for the open category)
+const catButtons = []; // per category: { btn, current, caret }
 const mkSpan = (cls, text) => {
   const s = document.createElement("span");
   s.className = cls;
@@ -50,51 +59,65 @@ const mkSpan = (cls, text) => {
   return s;
 };
 
-// Submenu: one box per dig order (hidden until the category is opened).
-for (const o of DIG_CATEGORY.orders) {
+// One category button per category along the menubar.
+CATEGORIES.forEach((cat, ci) => {
   const btn = document.createElement("button");
-  btn.className = "order";
-  btn.style.setProperty("--order-accent", o.accent);
-  btn.title = `${o.label} (${o.hotkey})`;
-  btn.append(mkSpan("glyph", o.glyph), mkSpan("label", o.label), mkSpan("key", o.hotkey));
+  btn.className = "category";
+  btn.style.setProperty("--order-accent", cat.accent || "#e89628");
+  const current = mkSpan("cat-current", "");
+  const caret = mkSpan("cat-caret", "▴");
+  btn.append(mkSpan("cat-glyph", cat.glyph), mkSpan("cat-label", cat.label), current, caret);
   btn.addEventListener("click", () => {
-    setOrder(o.kind); // picking a tool leaves the submenu open, like DF
-    btn.blur(); // hand keyboard focus back to the map
+    setOpenCat(openCat === ci ? -1 : ci); // toggle this category; only one open at a time
+    btn.blur();
   });
-  orderbar.appendChild(btn);
-  orderButtons.set(o.kind, btn);
-}
-
-// Category button: shows the armed order and toggles the submenu open/closed.
-const catBtn = document.createElement("button");
-catBtn.className = "category";
-const catCurrent = mkSpan("cat-current", "");
-const catCaret = mkSpan("cat-caret", "▴");
-catBtn.append(mkSpan("cat-glyph", DIG_CATEGORY.glyph), mkSpan("cat-label", DIG_CATEGORY.label), catCurrent, catCaret);
-catBtn.addEventListener("click", () => {
-  setMenuOpen(!menuOpen);
-  catBtn.blur();
+  menubar.appendChild(btn);
+  catButtons.push({ btn, current, caret });
 });
-menubar.appendChild(catBtn);
 
-function setOrder(kind) {
-  currentOrder = kind;
-  for (const [k, b] of orderButtons) b.classList.toggle("active", k === kind);
-  const o = ORDERS.find((x) => x.kind === kind);
-  catCurrent.textContent = o ? o.label : kind;
-  // Tie the category's accent to the armed tool so the collapsed bar is colour-coded too.
-  catBtn.style.setProperty("--order-accent", o ? o.accent : "#e89628");
+// (Re)populate the submenu (#orderbar) with the tool boxes of category `ci`.
+function buildSubmenu(ci) {
+  orderbar.replaceChildren();
+  orderButtons.clear();
+  for (const o of CATEGORIES[ci].orders) {
+    const btn = document.createElement("button");
+    btn.className = "order";
+    btn.style.setProperty("--order-accent", o.accent);
+    btn.title = o.hotkey ? `${o.label} (${o.hotkey})` : o.label;
+    btn.append(mkSpan("glyph", o.glyph), mkSpan("label", o.label), mkSpan("key", o.hotkey || ""));
+    btn.addEventListener("click", () => {
+      setTool(o); // picking a tool leaves the submenu open, like DF
+      btn.blur(); // hand keyboard focus back to the map
+    });
+    orderbar.appendChild(btn);
+    orderButtons.set(o, btn);
+    btn.classList.toggle("active", o === currentTool);
+  }
 }
 
-function setMenuOpen(open) {
-  menuOpen = open;
-  orderbar.classList.toggle("hidden", !open);
-  catBtn.classList.toggle("active", open);
-  catCaret.textContent = open ? "▾" : "▴";
+function setOpenCat(ci) {
+  openCat = ci;
+  orderbar.classList.toggle("hidden", ci < 0);
+  if (ci >= 0) buildSubmenu(ci);
+  catButtons.forEach((c, i) => {
+    c.btn.classList.toggle("active", i === ci);
+    c.caret.textContent = i === ci ? "▾" : "▴";
+  });
 }
 
-setMenuOpen(false);
-setOrder(currentOrder);
+function setTool(o) {
+  currentTool = o;
+  for (const [ord, b] of orderButtons) b.classList.toggle("active", ord === o);
+  // Reflect the armed tool on its category button (label + accent), so the collapsed bar reads right.
+  const ci = CATEGORIES.findIndex((c) => c.orders.includes(o));
+  if (ci >= 0) {
+    catButtons[ci].current.textContent = o.label;
+    catButtons[ci].btn.style.setProperty("--order-accent", o.accent);
+  }
+}
+
+setOpenCat(-1);
+setTool(currentTool);
 
 // ---- chat + presence: the one cross-client channel (the bridge hub broadcasts these to all) ----
 const savedNick = localStorage.getItem("dfplex.nick") || `Player-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -257,9 +280,15 @@ window.addEventListener("mouseup", (e) => {
       for (let x = r.x0; x <= r.x1 && tiles.length < 4096; x++) tiles.push({ x, y, z: cam.z });
     }
     if (source && source.running && tiles.length) {
-      source.send({ type: C2S.COMMAND, op: "designate", kind: currentOrder, tiles });
-      const o = ORDERS.find((x) => x.kind === currentOrder);
-      setStatus(`${o ? o.label : currentOrder}: ${tiles.length} tile(s)`);
+      if (currentTool.op === "build") {
+        // Single-tile buildings place once at the drag anchor; constructions stamp the rectangle.
+        const place = currentTool.tileMode === "single" ? [tiles[0]] : tiles;
+        source.send({ type: C2S.COMMAND, op: "build", kind: currentTool.kind, tiles: place });
+        setStatus(`build ${currentTool.label}: ${place.length} tile(s)`);
+      } else {
+        source.send({ type: C2S.COMMAND, op: "designate", kind: currentTool.kind, tiles });
+        setStatus(`${currentTool.label}: ${tiles.length} tile(s)`);
+      }
     }
     invalidate();
   }
@@ -302,18 +331,22 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     return;
   }
-  if (e.key === "Escape" && menuOpen) {
-    setMenuOpen(false);
+  if (e.key === "Escape" && openCat >= 0) {
+    setOpenCat(-1);
     e.preventDefault();
     return;
   }
-  const ord = ORDERS.find((o) => o.hotkey === e.key);
-  if (ord) {
-    setOrder(ord.kind);
-    setMenuOpen(true); // surface the submenu so the new selection is visible
-    setStatus(`order: ${ord.label}`);
-    e.preventDefault();
-    return;
+  // Number keys pick a tool by hotkey across categories (currently the dig tools 1–7); selecting
+  // one opens its category so the submenu shows the choice.
+  for (let ci = 0; ci < CATEGORIES.length; ci++) {
+    const ord = CATEGORIES[ci].orders.find((o) => o.hotkey === e.key);
+    if (ord) {
+      setOpenCat(ci);
+      setTool(ord);
+      setStatus(`tool: ${ord.label}`);
+      e.preventDefault();
+      return;
+    }
   }
   const PAN = 2;
   switch (e.key) {
@@ -360,8 +393,8 @@ function hudText() {
     `cursor: ${c ? `${c.x},${c.y} (tile ${code})` : "—"}`,
     `units: ${world.units.size}`,
     `frame: ${world.frame}  fps(sim): ${world.fps}`,
-    `order: ${ORDERS.find((o) => o.kind === currentOrder)?.label ?? currentOrder}`,
-    `[L-drag: order · M-drag: pan]`,
+    `tool: ${currentTool.label}`,
+    `[L-drag: ${currentTool.op === "build" ? "build" : "designate"} · M-drag: pan]`,
   ].join("   ");
 }
 
