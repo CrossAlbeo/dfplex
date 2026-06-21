@@ -176,15 +176,53 @@ export class DFAccess {
     return out;
   }
 
-  /** Apply a dig-style designation to a list of {x,y,z} tiles via RFR SendDigCommand. */
+  /**
+   * Apply a designation to a list of {x,y,z} tiles. Dig-style kinds go through RFR SendDigCommand;
+   * chop/gather have no RFR designation, so they mark the plant under each tile via DFHack's core
+   * Lua designations API (see _markPlants). markPlant lands a tile_dig_designation either way, so
+   * both paths stream back to clients through the normal desig channel.
+   */
   async designate(kind, tiles) {
     await this.connect();
     if (!tiles || !tiles.length) return;
+    if (kind === "chop" || kind === "gather") return this._markPlants(kind, tiles);
     const designation = DESIGNATIONS[kind] ?? DESIGNATIONS.dig;
     await this.client.call("SendDigCommand", {
       designation,
       locations: tiles.map((t) => ({ x: t.x, y: t.y, z: t.z })),
     });
+  }
+
+  /**
+   * Mark the plant under each tile for chopping (trees) or gathering (shrubs) via DFHack's core Lua
+   * designations API — RFR's SendDigCommand has no chop/gather designation. dfhack.maps.getPlantAtTile
+   * resolves the plant; dfhack.designations.markPlant auto-selects chop vs gather *from the plant
+   * itself* (it ignores `kind`), so each tool must filter which plants it touches — else one drag
+   * would chop every tree AND gather every shrub under it. We classify by plant *species* via its raw
+   * TREE flag (world.raws.plants.all[plant.material].flags.TREE): chop marks only TREE species (incl.
+   * saplings), gather only non-trees (bushes/crops/grasses). Tile shape proved unreliable — some
+   * gatherable bushes aren't SHRUB-shaped, so a shape rule leaked them into chop. canMarkPlant still
+   * skips unmarkable tiles. The mark lands as RFR
+   * tile_dig_designation, so it streams back through the normal desig path with no extra channel.
+   * `kind` (chop|gather) is a trusted label only (never client free text); coords are coerced to
+   * integers — nothing client-controlled is interpolated as code.
+   */
+  async _markPlants(kind, tiles) {
+    const ps = tiles
+      .filter((t) => Number.isFinite(t.x) && Number.isFinite(t.y) && Number.isFinite(t.z))
+      .map((t) => `{x=${t.x | 0},y=${t.y | 0},z=${t.z | 0}}`)
+      .join(",");
+    if (!ps) return;
+    const wantTree = kind === "chop"; // chop => TREE species (incl. saplings); gather => everything else
+    const code =
+      `local ps={${ps}} local d=dfhack.designations local pr=df.global.world.raws.plants.all local placed=0 ` +
+      `for _,p in ipairs(ps) do ` +
+      `local pl=dfhack.maps.getPlantAtTile(p.x,p.y,p.z) ` +
+      `if pl then local raw=pr[pl.material] local isTree=(raw~=nil) and raw.flags.TREE ` +
+      `if isTree==${wantTree} and d.canMarkPlant(pl) then local ok=pcall(d.markPlant,pl) if ok then placed=placed+1 end end ` +
+      `end end ` +
+      `print('dfplex ${kind} placed='..placed)`;
+    await this.client.call("RunCommand", { command: "lua", arguments: [code] });
   }
 
   /**

@@ -50,10 +50,14 @@ const DIG_ORDERS = ORDERS.map((o) => ({
 // shown but not wired, each awaiting a live write-path probe before it does anything.
 const MINING_ORDERS = DIG_ORDERS.filter((o) => o.kind !== "remove");
 const REMOVE_ORDER = DIG_ORDERS.find((o) => o.kind === "remove");
+// Plant designations: chop trees / gather shrubs. Both ride op "designate" like dig, but the bridge
+// marks the plant under each tile (dfhack.designations.markPlant) rather than calling SendDigCommand.
+const CHOP_ORDER = { op: "designate", kind: "chop", label: "Chop trees", glyph: "♣", accent: "#8d6e3a", tileMode: "rect" };
+const GATHER_ORDER = { op: "designate", kind: "gather", label: "Gather plants", glyph: "✿", accent: "#5aa84f", tileMode: "rect" };
 const CATEGORIES = [
   { box: "designate", glyph: "⛏", label: "Dig", accent: "#e89628", orders: MINING_ORDERS },
-  { box: "designate", glyph: "♣", label: "Chop", accent: "#8d6e3a", orders: [], pending: true },
-  { box: "designate", glyph: "✿", label: "Gather", accent: "#5aa84f", orders: [], pending: true },
+  { box: "designate", glyph: "♣", label: "Chop", accent: "#8d6e3a", orders: [CHOP_ORDER] },
+  { box: "designate", glyph: "✿", label: "Gather", accent: "#5aa84f", orders: [GATHER_ORDER] },
   { box: "designate", glyph: "✎", label: "Engrave", accent: "#b08bd9", orders: [], pending: true },
   { box: "designate", glyph: "✕", label: "Remove", accent: "#9aa0a6", orders: [REMOVE_ORDER] },
   { box: "place", glyph: "▣", label: "Build", accent: "#9aa0a6", children: BUILD_CATEGORIES },
