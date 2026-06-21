@@ -321,3 +321,100 @@ body {
   font-size: 10px;
   color: #555;
 }
+
+/* Stockpile category editor: a floating panel anchored top-right (mirroring the chat overlay on the
+   left), shown when the Edit-pile tool clicks an existing stockpile. One toggle row per category. */
+#sp-editor {
+  position: fixed;
+  right: 8px;
+  top: 48px;
+  z-index: 12;
+  width: 210px;
+  display: none;
+  flex-direction: column;
+  background: rgba(16, 16, 16, 0.97);
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+
+#sp-editor.open {
+  display: flex;
+}
+
+#sp-editor .sp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+#sp-editor .sp-title {
+  flex: 1;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+#sp-editor .sp-title b {
+  color: #c9a227;
+}
+
+#sp-editor .sp-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+#sp-editor .sp-close:hover {
+  color: var(--ink);
+}
+
+#sp-editor .sp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+/* A category row toggles like a checkbox: a box glyph + label, gold + lit when the category is on. */
+#sp-editor .sp-cat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+
+#sp-editor .sp-cat:hover {
+  background: #1c1c1c;
+}
+
+#sp-editor .sp-cat .sp-box {
+  font-size: 14px;
+  line-height: 1;
+  color: #555;
+}
+
+#sp-editor .sp-cat.on {
+  color: var(--ink);
+}
+
+#sp-editor .sp-cat.on .sp-box {
+  color: #c9a227;
+}

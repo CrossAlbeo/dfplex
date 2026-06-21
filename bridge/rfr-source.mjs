@@ -83,6 +83,19 @@ export class RFRSource extends DataSource {
           return Promise.all(zs.map((z) => this._streamZ(z)));
         })
         .catch((e) => this._emit({ type: S2C.ERROR, message: `stockpile: ${e.message}` }));
+    } else if (msg.type === C2S.COMMAND && msg.op === "stockpile-get") {
+      // Editor opened a pile: read its category state and send it back for the panel.
+      this.df
+        .stockpileGet(msg.tile)
+        .then((s) => this._emit({ type: S2C.STOCKPILE, box: s.box, cats: s.cats || {} }))
+        .catch((e) => this._emit({ type: S2C.ERROR, message: `stockpile-get: ${e.message}` }));
+    } else if (msg.type === C2S.COMMAND && msg.op === "stockpile-set") {
+      // Editor toggled categories: apply, then echo the re-read state so the panel reflects ground truth.
+      this.df
+        .stockpileSet(msg.tile, msg.cats)
+        .then(() => this.df.stockpileGet(msg.tile))
+        .then((s) => this._emit({ type: S2C.STOCKPILE, box: s.box, cats: s.cats || {} }))
+        .catch((e) => this._emit({ type: S2C.ERROR, message: `stockpile-set: ${e.message}` }));
     }
   }
 

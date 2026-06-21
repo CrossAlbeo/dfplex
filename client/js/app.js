@@ -9,7 +9,7 @@ import { MockSource } from "./mock.js";
 import { WebSocketSource } from "./websocketsource.js";
 import { ORDERS } from "./designations.js";
 import { BUILD_CATEGORIES } from "./buildings.js";
-import { STOCKPILE_PRESETS } from "./stockpiles.js";
+import { STOCKPILE_PRESETS, STOCKPILE_CATEGORIES } from "./stockpiles.js";
 
 const view = document.getElementById("view");
 const hud = document.getElementById("hud");
@@ -56,6 +56,9 @@ const REMOVE_ORDER = DIG_ORDERS.find((o) => o.kind === "remove");
 // marks the plant under each tile (dfhack.designations.markPlant) rather than calling SendDigCommand.
 const CHOP_ORDER = { op: "designate", kind: "chop", label: "Chop trees", glyph: "♣", accent: "#8d6e3a", tileMode: "rect" };
 const GATHER_ORDER = { op: "designate", kind: "gather", label: "Gather plants", glyph: "✿", accent: "#5aa84f", tileMode: "rect" };
+// Edit pile: a single-click "query" tool — click an existing stockpile to open the category editor
+// (op "stockpile-edit"); it sends no placement, just asks the bridge for that pile's settings.
+const STOCKPILE_EDIT = { op: "stockpile-edit", kind: "edit", label: "Edit pile", glyph: "✐", accent: "#c9a227", tileMode: "single" };
 const CATEGORIES = [
   { box: "designate", glyph: "⛏", label: "Dig", accent: "#e89628", orders: MINING_ORDERS },
   { box: "designate", glyph: "♣", label: "Chop", accent: "#8d6e3a", orders: [CHOP_ORDER] },
@@ -63,7 +66,7 @@ const CATEGORIES = [
   { box: "designate", glyph: "✎", label: "Engrave", accent: "#b08bd9", orders: [], pending: true },
   { box: "designate", glyph: "✕", label: "Remove", accent: "#9aa0a6", orders: [REMOVE_ORDER] },
   { box: "place", glyph: "▣", label: "Build", accent: "#9aa0a6", children: BUILD_CATEGORIES },
-  { box: "place", glyph: "▦", label: "Stockpiles", accent: "#c9a227", orders: STOCKPILE_PRESETS },
+  { box: "place", glyph: "▦", label: "Stockpiles", accent: "#c9a227", orders: [STOCKPILE_EDIT, ...STOCKPILE_PRESETS] },
   { box: "place", glyph: "⬚", label: "Zones", accent: "#3c9dba", orders: [], pending: true },
 ];
 
@@ -217,6 +220,69 @@ function setTool(o) {
 setOpenCat(-1);
 setTool(currentTool);
 
+// ---- stockpile category editor: a floating panel populated by the bridge when the Edit-pile tool
+// clicks a stockpile. Each row toggles one of the 17 categories; a click sends a `stockpile-set` and
+// the bridge echoes the re-read state back (S2C.STOCKPILE), which repopulates the rows as ground
+// truth. Modeless — once open it works regardless of the armed tool. ----
+const spEditor = document.createElement("div");
+spEditor.id = "sp-editor";
+const spTitle = mkSpan("sp-title", "");
+const spClose = document.createElement("button");
+spClose.className = "sp-close";
+spClose.textContent = "✕";
+spClose.title = "Close";
+const spHead = document.createElement("div");
+spHead.className = "sp-head";
+spHead.append(spTitle, spClose);
+const spList = document.createElement("div");
+spList.className = "sp-list";
+spEditor.append(spHead, spList);
+document.body.appendChild(spEditor);
+
+let editTile = null; // tile whose pile the panel edits — the bridge resolves the pile from it (findAtTile)
+const spRows = new Map(); // category key -> { btn, box }
+
+function setRow(key, on) {
+  const row = spRows.get(key);
+  if (!row) return;
+  row.btn.classList.toggle("on", on);
+  row.box.textContent = on ? "☑" : "☐";
+}
+
+for (const cat of STOCKPILE_CATEGORIES) {
+  const btn = document.createElement("button");
+  btn.className = "sp-cat";
+  const box = mkSpan("sp-box", "☐");
+  btn.append(box, mkSpan("sp-cat-label", cat.label));
+  btn.addEventListener("click", () => {
+    const on = !btn.classList.contains("on"); // optimistic flip; the bridge echo reconciles
+    setRow(cat.key, on);
+    if (source && source.running && editTile) {
+      source.send({ type: C2S.COMMAND, op: "stockpile-set", tile: editTile, cats: { [cat.key]: on } });
+    }
+    btn.blur();
+  });
+  spList.appendChild(btn);
+  spRows.set(cat.key, { btn, box });
+}
+
+function openEditor(box, cats) {
+  const w = box.x1 - box.x0 + 1;
+  const h = box.y1 - box.y0 + 1;
+  const corner = document.createElement("b");
+  corner.textContent = `${box.x0},${box.y0}`;
+  spTitle.replaceChildren(document.createTextNode("Stockpile "), corner, document.createTextNode(` · ${w}×${h}`));
+  for (const cat of STOCKPILE_CATEGORIES) setRow(cat.key, !!(cats && cats[cat.key]));
+  spEditor.classList.add("open");
+}
+
+function closeEditor() {
+  spEditor.classList.remove("open");
+  editTile = null;
+}
+
+spClose.addEventListener("click", closeEditor);
+
 // ---- chat + presence: the one cross-client channel (the bridge hub broadcasts these to all) ----
 const savedNick = localStorage.getItem("dfplex.nick") || `Player-${Math.floor(1000 + Math.random() * 9000)}`;
 nickInput.value = savedNick;
@@ -304,6 +370,17 @@ function connect() {
       setPresence(m.list || []);
       return;
     }
+    if (m.type === S2C.STOCKPILE) {
+      // Reply to stockpile-get/-set: open/refresh the editor for the pile, or report none found.
+      if (m.box) {
+        openEditor(m.box, m.cats || {});
+        setStatus(`editing stockpile ${m.box.x0},${m.box.y0}`);
+      } else {
+        closeEditor();
+        setStatus("no stockpile under that tile");
+      }
+      return;
+    }
     world.apply(m);
     if (m.type === S2C.MAP) renderer.invalidateMap();
     if (m.type === S2C.HELLO) {
@@ -387,6 +464,11 @@ window.addEventListener("mouseup", (e) => {
         // One pile spans the whole rectangle; the bridge derives its bounding box from these tiles.
         source.send({ type: C2S.COMMAND, op: "stockpile", kind: currentTool.kind, tiles });
         setStatus(`stockpile ${currentTool.label}: ${tiles.length} tile(s)`);
+      } else if (currentTool.op === "stockpile-edit") {
+        // Single click: ask the bridge for the pile under the anchor tile; the panel opens on reply.
+        editTile = tiles[0];
+        source.send({ type: C2S.COMMAND, op: "stockpile-get", tile: editTile });
+        setStatus(`edit stockpile @ ${editTile.x},${editTile.y}…`);
       } else {
         source.send({ type: C2S.COMMAND, op: "designate", kind: currentTool.kind, tiles });
         setStatus(`${currentTool.label}: ${tiles.length} tile(s)`);

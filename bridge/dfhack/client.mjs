@@ -75,7 +75,23 @@ export class DFHackClient {
 
   // Public call: serialized so a shared client is safe across many callers.
   call(method, request = {}) {
-    const task = () => this._invoke(method, request);
+    return this._enqueue(() => this._invoke(method, request));
+  }
+
+  // Like call(), but captures the server's REPLY_TEXT (e.g. a Lua print()) and returns it next to
+  // the decoded reply: { reply, text: [string, …] }. The only way to read structured data back from
+  // RunCommand("lua", …), whose declared output type is EmptyMessage — the print() surface is the
+  // payload. Without a sink, REPLY_TEXT still goes to stderr as before.
+  callText(method, request = {}) {
+    return this._enqueue(async () => {
+      const text = [];
+      const reply = await this._invoke(method, request, text);
+      return { reply, text };
+    });
+  }
+
+  // Serialize a task onto the RPC chain (the socket is strictly request/response).
+  _enqueue(task) {
     const p = this._chain.then(task, task);
     this._chain = p.then(
       () => {},
@@ -84,18 +100,19 @@ export class DFHackClient {
     return p;
   }
 
-  async _invoke(method, request) {
+  async _invoke(method, request, textSink) {
     let info = this.bound.get(method);
     if (!info) info = await this.bind(method);
     const In = this.type(info.input);
     const Out = this.type(info.output);
     const body = In.encode(In.create(request)).finish();
     this.conn.sendMessage(info.id, body);
-    return await this._awaitResult(Out);
+    return await this._awaitResult(Out, textSink);
   }
 
-  // Read frames until RESULT (decode + return) or FAIL (throw), logging TEXT notifications.
-  async _awaitResult(OutType) {
+  // Read frames until RESULT (decode + return) or FAIL (throw). TEXT notifications go to `textSink`
+  // when provided (captured for the caller), else to stderr as `[df] …`.
+  async _awaitResult(OutType, textSink) {
     for (;;) {
       const { id, size } = await this.conn.recvHeader();
       if (id === RPC.REPLY_FAIL) {
@@ -108,7 +125,9 @@ export class DFHackClient {
         try {
           const note = this.type("dfproto.CoreTextNotification").decode(body);
           for (const f of note.fragments || []) {
-            if (f.text) process.stderr.write(`[df] ${f.text}\n`);
+            if (!f.text) continue;
+            if (textSink) textSink.push(f.text);
+            else process.stderr.write(`[df] ${f.text}\n`);
           }
         } catch {
           /* ignore unparseable text */
