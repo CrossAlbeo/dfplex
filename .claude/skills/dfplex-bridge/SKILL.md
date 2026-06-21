@@ -38,14 +38,15 @@ No aggregate runner (`npm test` runs only ws-smoke). Run files individually:
 
 ```
 cd "D:/OneDrive/Code/dfplex" && for t in \
-  designate-kinds chop-gather-route build-route designations buildings-unit \
-  chat-hub chat-join-race buildings-smoke chat-smoke; do \
+  designate-kinds chop-gather-route build-route stockpile-route designations \
+  buildings-unit stockpiles-unit chat-hub chat-join-race buildings-smoke chat-smoke; do \
   echo "=== $t ==="; node "bridge/test/$t.mjs" 2>&1 | tail -2; done
 ```
 
 (`*-route` / `designate-kinds` / `chop-gather-route` stub `df.client` and assert the right RPC + the
-coord guard; `buildings-unit` / `designations` are pure logic; `buildings-smoke` / `chat-smoke` spawn
-their own mock-mode bridge on a private port; `chat-hub` / `chat-join-race` are headless.)
+coord guard — `stockpile-route` also checks the server-side bbox math + per-category enable;
+`buildings-unit` / `stockpiles-unit` / `designations` are pure logic; `buildings-smoke` / `chat-smoke`
+spawn their own mock-mode bridge on a private port; `chat-hub` / `chat-join-race` are headless.)
 
 **Tier 2 — needs a running bridge:** `ws-smoke` (any bridge, mock fallback is fine),
 `multi-smoke` (bridge must be on **live DF** — two real z-levels). Start the bridge first, then run.
@@ -54,8 +55,9 @@ their own mock-mode bridge on a private port; `chat-hub` / `chat-join-race` are 
 `build-center-live`, `build-size-probe`. These open their own DFAccess to :5000.
 
 **Probes (`bridge/dfhack/*-probe.mjs`, live DF):** manual de-risk scripts (dig-probe, replace-probe,
-build-probe, designate-probe). Safe to run by default; any mutating action is behind an explicit flag
-(e.g. `--mark X Y Z`). Use one to pin down a DFHack call **before** writing the backend for it.
+build-probe, designate-probe, stockpile-probe). Safe to run by default; any mutating action is behind
+an explicit flag (e.g. `--mark X Y Z`, stockpile-probe's `--place X Y Z W H`). Use one to pin down a
+DFHack call **before** writing the backend for it.
 
 ## Add a backend slice (the repeated pattern)
 

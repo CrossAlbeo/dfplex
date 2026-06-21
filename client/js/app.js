@@ -9,6 +9,7 @@ import { MockSource } from "./mock.js";
 import { WebSocketSource } from "./websocketsource.js";
 import { ORDERS } from "./designations.js";
 import { BUILD_CATEGORIES } from "./buildings.js";
+import { STOCKPILE_PRESETS } from "./stockpiles.js";
 
 const view = document.getElementById("view");
 const hud = document.getElementById("hud");
@@ -40,8 +41,9 @@ function setStatus(text) {
 // chop, gather, engrave, remove) and Place (build, stockpiles, zones). A group is either a *leaf*
 // (its tool boxes show directly), a *branch* (Build — opening it lists sub-categories, and picking
 // one descends to that category's tool boxes with a back chip), or *pending* (scaffolded, no backend
-// yet — dimmed and inert). Each tool carries the op it sends (designate vs build) and how it places
-// (tileMode). Dig tools come from designations.js; build categories from buildings.js. ----
+// yet — dimmed and inert). Each tool carries the op it sends (designate / build / stockpile) and how
+// it places (tileMode). Dig tools come from designations.js; build categories from buildings.js;
+// stockpile presets from stockpiles.js. ----
 const DIG_ORDERS = ORDERS.map((o) => ({
   op: "designate", kind: o.kind, label: o.label, glyph: o.glyph, accent: o.accent, hotkey: o.hotkey, tileMode: "rect",
 }));
@@ -61,7 +63,7 @@ const CATEGORIES = [
   { box: "designate", glyph: "✎", label: "Engrave", accent: "#b08bd9", orders: [], pending: true },
   { box: "designate", glyph: "✕", label: "Remove", accent: "#9aa0a6", orders: [REMOVE_ORDER] },
   { box: "place", glyph: "▣", label: "Build", accent: "#9aa0a6", children: BUILD_CATEGORIES },
-  { box: "place", glyph: "▦", label: "Stockpiles", accent: "#c9a227", orders: [], pending: true },
+  { box: "place", glyph: "▦", label: "Stockpiles", accent: "#c9a227", orders: STOCKPILE_PRESETS },
   { box: "place", glyph: "⬚", label: "Zones", accent: "#3c9dba", orders: [], pending: true },
 ];
 
@@ -381,6 +383,10 @@ window.addEventListener("mouseup", (e) => {
         const place = currentTool.tileMode === "single" ? [tiles[0]] : tiles;
         source.send({ type: C2S.COMMAND, op: "build", kind: currentTool.kind, tiles: place });
         setStatus(`build ${currentTool.label}: ${place.length} tile(s)`);
+      } else if (currentTool.op === "stockpile") {
+        // One pile spans the whole rectangle; the bridge derives its bounding box from these tiles.
+        source.send({ type: C2S.COMMAND, op: "stockpile", kind: currentTool.kind, tiles });
+        setStatus(`stockpile ${currentTool.label}: ${tiles.length} tile(s)`);
       } else {
         source.send({ type: C2S.COMMAND, op: "designate", kind: currentTool.kind, tiles });
         setStatus(`${currentTool.label}: ${tiles.length} tile(s)`);
@@ -495,7 +501,7 @@ function hudText() {
     `units: ${world.units.size}`,
     `frame: ${world.frame}  fps(sim): ${world.fps}`,
     `tool: ${currentTool.label}`,
-    `[L-drag: ${currentTool.op === "build" ? "build" : "designate"} · M-drag: pan]`,
+    `[L-drag: ${currentTool.op} · M-drag: pan]`,
   ].join("   ");
 }
 

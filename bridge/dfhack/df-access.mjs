@@ -6,6 +6,7 @@ import { DFHackClient } from "./client.mjs";
 import { buildTileTable } from "./tiles.mjs";
 import { TILE } from "../../client/js/protocol.js";
 import { BUILD_BY_KIND } from "../../client/js/buildings.js";
+import { STOCKPILE_BY_KIND, CATEGORY_KEYS } from "../../client/js/stockpiles.js";
 
 // dfplex command kind -> RFR TileDigDesignation enum value.
 const DESIGNATIONS = {
@@ -261,6 +262,59 @@ export class DFAccess {
       `if st>=0 then a.subtype=st end if dr>=0 then a.direction=dr end ` +
       `local ok,b=pcall(dfhack.buildings.constructBuilding,a) if ok and b then placed=placed+1 else err=tostring(b) end end ` +
       `print('dfplex build ${kind} placed='..placed..(err and (' err='..err) or ''))`;
+    await this.client.call("RunCommand", { command: "lua", arguments: [code] });
+  }
+
+  /**
+   * Place one stockpile spanning the drag rectangle and pre-configure it to a preset type. RFR has no
+   * stockpile RPC, so this runs dfhack.buildings.constructBuilding through RunCommand("lua", ...).
+   * Stockpiles are *abstract* buildings (abstract=true, no materials) and, built this way, accept
+   * NOTHING until configured — so for each category in the preset we set settings.flags.<cat> (the
+   * master enable the DF UI toggles) and fill that category's sub-item flags. building_type Stockpile
+   * (29) streams back on the normal buildings channel, so the pile renders with no extra wiring.
+   * `kind` is a trusted preset key (never client free text); the category names come from the frozen
+   * preset table and are re-checked against CATEGORY_KEYS; coords are integer-coerced and the bounding
+   * box is computed server-side — nothing client-controlled is interpolated as code.
+   */
+  async stockpile(kind, tiles) {
+    await this.connect();
+    const preset = STOCKPILE_BY_KIND[kind];
+    if (!preset) throw new Error(`unknown stockpile kind: ${kind}`);
+    if (!tiles || !tiles.length) return;
+    // Bounding box (corner + span) over the finite tiles of the drag rectangle; z from the first.
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, z = null, n = 0;
+    for (const t of tiles) {
+      if (!Number.isFinite(t.x) || !Number.isFinite(t.y) || !Number.isFinite(t.z)) continue;
+      const x = t.x | 0, y = t.y | 0;
+      if (x < x0) x0 = x;
+      if (y < y0) y0 = y;
+      if (x > x1) x1 = x;
+      if (y > y1) y1 = y;
+      if (z === null) z = t.z | 0;
+      n++;
+    }
+    if (!n) return;
+    const w = x1 - x0 + 1, h = y1 - y0 + 1;
+    // Categories come from the trusted preset table; re-filter to known keys as defense-in-depth so
+    // only df.stockpile_settings.flags field names are ever interpolated.
+    const known = new Set(CATEGORY_KEYS);
+    const cats = preset.cats.filter((c) => known.has(c));
+    if (!cats.length) return;
+    const catList = cats.map((c) => `'${c}'`).join(",");
+    const code =
+      `local x0,y0,z,w,h=${x0},${y0},${z},${w},${h} local cats={${catList}} ` +
+      `local ok,b=pcall(dfhack.buildings.constructBuilding,{type=df.building_type.Stockpile,pos={x=x0,y=y0,z=z},width=w,height=h,abstract=true}) ` +
+      `if not ok or not b then print('dfplex stockpile ${kind} err='..tostring(b)) return end ` +
+      `local st=b.settings ` +
+      `local function fill(name) ` +
+      `if type(st.flags[name])=='boolean' then st.flags[name]=true end ` +
+      `local cat=st[name] ` +
+      `if type(cat)=='userdata' then for k,v in pairs(cat) do ` +
+      `if type(v)=='boolean' then cat[k]=true ` +
+      `elseif type(v)=='userdata' then for i,vv in pairs(v) do if type(vv)=='boolean' then v[i]=true end end end ` +
+      `end end end ` +
+      `for _,c in ipairs(cats) do fill(c) end ` +
+      `print('dfplex stockpile ${kind} id='..tostring(b.id)..' '..w..'x'..h)`;
     await this.client.call("RunCommand", { command: "lua", arguments: [code] });
   }
 }
