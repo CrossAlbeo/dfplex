@@ -19,6 +19,20 @@ const DESIGNATIONS = {
   remove: 0, // NO_DIG (clears a designation)
 };
 
+// Lua helper (expects a settings struct `st` in scope) defining fill(name): enable one stockpile
+// category by setting its master flag bit AND flipping every boolean — and every boolean inside a
+// nested vector — under that category's sub-struct true. A pile built or edited this way "accepts
+// everything in the category", matching the DF UI's category master toggle. Shared by the preset
+// placement (stockpile) and the per-pile editor (stockpileSet) so "on" means the same in both.
+const STOCKPILE_FILL_LUA =
+  `local function fill(name) ` +
+  `if type(st.flags[name])=='boolean' then st.flags[name]=true end ` +
+  `local cat=st[name] ` +
+  `if type(cat)=='userdata' then for k,v in pairs(cat) do ` +
+  `if type(v)=='boolean' then cat[k]=true ` +
+  `elseif type(v)=='userdata' then for i,vv in pairs(v) do if type(vv)=='boolean' then v[i]=true end end end ` +
+  `end end end `;
+
 export class DFAccess {
   constructor(opts = {}) {
     this.opts = opts; // { host, port }
@@ -306,15 +320,83 @@ export class DFAccess {
       `local ok,b=pcall(dfhack.buildings.constructBuilding,{type=df.building_type.Stockpile,pos={x=x0,y=y0,z=z},width=w,height=h,abstract=true}) ` +
       `if not ok or not b then print('dfplex stockpile ${kind} err='..tostring(b)) return end ` +
       `local st=b.settings ` +
-      `local function fill(name) ` +
-      `if type(st.flags[name])=='boolean' then st.flags[name]=true end ` +
-      `local cat=st[name] ` +
-      `if type(cat)=='userdata' then for k,v in pairs(cat) do ` +
-      `if type(v)=='boolean' then cat[k]=true ` +
-      `elseif type(v)=='userdata' then for i,vv in pairs(v) do if type(vv)=='boolean' then v[i]=true end end end ` +
-      `end end end ` +
+      STOCKPILE_FILL_LUA +
       `for _,c in ipairs(cats) do fill(c) end ` +
       `print('dfplex stockpile ${kind} id='..tostring(b.id)..' '..w..'x'..h)`;
+    await this.client.call("RunCommand", { command: "lua", arguments: [code] });
+  }
+
+  /**
+   * Read the category state of the stockpile under a single tile, for the editor panel. RFR has no
+   * stockpile RPC and a pile carries no stable id on the streamed building record, so the client
+   * sends the clicked tile and the backend resolves the pile with dfhack.buildings.findAtTile
+   * (probe-confirmed to match from any interior tile, not just the corner). Returns
+   * { box:{x0,y0,x1,y1,z}, cats:{ <key>:bool, … } } for each of the 17 master flags, or { box:null }
+   * when the tile holds no pile. Coords are integer-coerced; the category names come only from the
+   * frozen CATEGORY_KEYS — nothing client-controlled is interpolated as code. The reply rides back on
+   * the Lua print() surface (RunCommand's output type is EmptyMessage), captured via callText.
+   */
+  async stockpileGet(tile) {
+    await this.connect();
+    if (!tile || !Number.isFinite(tile.x) || !Number.isFinite(tile.y) || !Number.isFinite(tile.z)) {
+      return { box: null };
+    }
+    const x = tile.x | 0, y = tile.y | 0, z = tile.z | 0;
+    const known = new Set(CATEGORY_KEYS);
+    const catList = CATEGORY_KEYS.map((c) => `'${c}'`).join(",");
+    const code =
+      `local x,y,z=${x},${y},${z} local cats={${catList}} ` +
+      `local b=dfhack.buildings.findAtTile(x,y,z) ` +
+      `if not b or b:getType()~=df.building_type.Stockpile then print('dfplex spget none') return end ` +
+      `local st=b.settings local out={} ` +
+      `for _,c in ipairs(cats) do out[#out+1]=c..'='..(st.flags[c] and '1' or '0') end ` +
+      `print('dfplex spget box='..b.x1..','..b.y1..','..b.x2..','..b.y2..','..b.z..' '..table.concat(out,' '))`;
+    const { text } = await this.client.callText("RunCommand", { command: "lua", arguments: [code] });
+    const blob = text.join("\n");
+    if (/dfplex spget none/.test(blob)) return { box: null };
+    const m = blob.match(/dfplex spget box=(-?\d+),(-?\d+),(-?\d+),(-?\d+),(-?\d+)[ \t]+([^\n]*)/);
+    if (!m) return { box: null };
+    const cats = {};
+    for (const tok of m[6].trim().split(/\s+/)) {
+      const eq = tok.indexOf("=");
+      if (eq <= 0) continue;
+      const k = tok.slice(0, eq);
+      if (known.has(k)) cats[k] = tok.slice(eq + 1) === "1";
+    }
+    return { box: { x0: +m[1], y0: +m[2], x1: +m[3], y1: +m[4], z: +m[5] }, cats };
+  }
+
+  /**
+   * Toggle categories on the stockpile under a tile (the editor's write path). `cats` is a sparse
+   * map { <key>:bool } of changes: true enables a category (master flag + sub-items via the shared
+   * fill helper, same as preset placement), false disables it (clear the master flag — the gate DF
+   * checks; sub-items are left untouched). Keys are filtered to CATEGORY_KEYS and coords are
+   * integer-coerced, so only known flag names and integers ever reach the Lua. No-ops (no known
+   * keys, non-finite tile) emit no RPC.
+   */
+  async stockpileSet(tile, cats) {
+    await this.connect();
+    if (!tile || !Number.isFinite(tile.x) || !Number.isFinite(tile.y) || !Number.isFinite(tile.z)) return;
+    if (!cats || typeof cats !== "object") return;
+    const known = new Set(CATEGORY_KEYS);
+    const on = [], off = [];
+    for (const [k, v] of Object.entries(cats)) {
+      if (!known.has(k)) continue;
+      (v ? on : off).push(k);
+    }
+    if (!on.length && !off.length) return;
+    const x = tile.x | 0, y = tile.y | 0, z = tile.z | 0;
+    const onList = on.map((c) => `'${c}'`).join(",");
+    const offList = off.map((c) => `'${c}'`).join(",");
+    const code =
+      `local x,y,z=${x},${y},${z} local on={${onList}} local off={${offList}} ` +
+      `local b=dfhack.buildings.findAtTile(x,y,z) ` +
+      `if not b or b:getType()~=df.building_type.Stockpile then print('dfplex spset none') return end ` +
+      `local st=b.settings ` +
+      STOCKPILE_FILL_LUA +
+      `for _,c in ipairs(on) do fill(c) end ` +
+      `for _,c in ipairs(off) do if type(st.flags[c])=='boolean' then st.flags[c]=false end end ` +
+      `print('dfplex spset id='..tostring(b.id)..' on='..#on..' off='..#off)`;
     await this.client.call("RunCommand", { command: "lua", arguments: [code] });
   }
 }

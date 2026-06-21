@@ -38,15 +38,17 @@ No aggregate runner (`npm test` runs only ws-smoke). Run files individually:
 
 ```
 cd "D:/OneDrive/Code/dfplex" && for t in \
-  designate-kinds chop-gather-route build-route stockpile-route designations \
-  buildings-unit stockpiles-unit chat-hub chat-join-race buildings-smoke chat-smoke; do \
+  designate-kinds chop-gather-route build-route stockpile-route stockpile-editor-route \
+  designations buildings-unit stockpiles-unit chat-hub chat-join-race buildings-smoke chat-smoke; do \
   echo "=== $t ==="; node "bridge/test/$t.mjs" 2>&1 | tail -2; done
 ```
 
 (`*-route` / `designate-kinds` / `chop-gather-route` stub `df.client` and assert the right RPC + the
-coord guard — `stockpile-route` also checks the server-side bbox math + per-category enable;
-`buildings-unit` / `stockpiles-unit` / `designations` are pure logic; `buildings-smoke` / `chat-smoke`
-spawn their own mock-mode bridge on a private port; `chat-hub` / `chat-join-race` are headless.)
+coord guard — `stockpile-route` also checks the server-side bbox math + per-category enable, and
+`stockpile-editor-route` the findAtTile read/write-by-tile + the callText print parse + the category
+allowlist; `buildings-unit` / `stockpiles-unit` / `designations` are pure logic; `buildings-smoke` /
+`chat-smoke` spawn their own mock-mode bridge on a private port; `chat-hub` / `chat-join-race` are
+headless.)
 
 **Tier 2 — needs a running bridge:** `ws-smoke` (any bridge, mock fallback is fine),
 `multi-smoke` (bridge must be on **live DF** — two real z-levels). Start the bridge first, then run.

@@ -116,6 +116,14 @@ local function enabledCats(st)
   end
   return table.concat(on, ',')
 end
+-- Master-flag read: the cheap "is this category on" signal the editor will use (one bool per
+-- category) — compared against the deep enabledCats() scan to confirm the flags alone are faithful.
+local CATS2 = {'animals','food','furniture','corpses','refuse','stone','wood','gems','bars_blocks','cloth','leather','ammo','coins','finished_goods','weapons','armor','sheet'}
+local function flagsOn(st)
+  local on = {}
+  for _,c in ipairs(CATS2) do local ok,fv = pcall(function() return st.flags[c] end) if ok and fv==true then on[#on+1]=c end end
+  return table.concat(on, ',')
+end
 local n = 0
 for _,b in ipairs(df.global.world.buildings.all) do
   if b:getType() == df.building_type.Stockpile then
@@ -123,6 +131,15 @@ for _,b in ipairs(df.global.world.buildings.all) do
     if n <= 6 then
       local box = '('..b.x1..','..b.y1..')-('..b.x2..','..b.y2..')@'..b.z
       print('PROBE pile id='..b.id..' box='..box..' enabled=['..enabledCats(b.settings)..']')
+      print('PROBE pile id='..b.id..' flags.on=['..flagsOn(b.settings)..']')
+      -- Editor read path on a REAL pile (read-only): does findAtTile resolve the pile from an
+      -- INTERIOR tile (center), not just the corner? If yes, the client can send a clicked tile and
+      -- the backend resolves the pile with no id.
+      local cx = math.floor((b.x1+b.x2)/2)
+      local cy = math.floor((b.y1+b.y2)/2)
+      local f = dfhack.buildings.findAtTile(cx, cy, b.z)
+      local match = (f ~= nil) and (f.id == b.id)
+      print('PROBE pile id='..b.id..' findAtTile('..cx..','..cy..','..b.z..') match='..tostring(match)..(f and (' gotType='..tostring(f:getType())) or ''))
     end
   end
 end

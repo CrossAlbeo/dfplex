@@ -14,6 +14,10 @@ export const S2C = Object.freeze({
   TICK: "tick",
   CHAT: "chat",
   PRESENCE: "presence",
+  // Reply to a `command`/`stockpile-get`: the clicked pile's current category state, for the editor
+  // panel. { type:"stockpile", box:{x0,y0,x1,y1,z}, cats:{ food:bool, stone:bool, … } } — or
+  // { type:"stockpile", box:null } when the clicked tile holds no pile.
+  STOCKPILE: "stockpile",
   ERROR: "error",
 });
 
