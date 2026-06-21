@@ -71,12 +71,15 @@ body {
   color: var(--muted);
 }
 
+/* The control panel is pinned to the bottom: the open category's tools bloom above the two menu
+   boxes, with the status line beneath them at the screen's bottom edge. z above chat so a tall open
+   menu covers it where they meet. */
 #bottom {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 10;
+  z-index: 11;
 }
 
 #hud {
@@ -107,10 +110,29 @@ body {
 #menubar {
   display: flex;
   justify-content: center;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 14px;
   padding: 6px 10px;
+}
+
+/* Two "big boxes" of top-level categories: Designate (dig/chop/gather/engrave/remove) and Place
+   (build/stockpiles/zones). Each box carries its own frame + label. */
+.menubox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
   background: rgba(16, 16, 16, 0.97);
-  border-top: 1px solid #2a2a2a;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+}
+
+.menubox-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-right: 2px;
 }
 
 .category {
@@ -157,6 +179,21 @@ body {
   font-size: 10px;
   color: var(--muted);
   margin-left: 2px;
+}
+
+/* Scaffolded categories (no backend wired yet): visible but clearly inert. */
+.category.pending {
+  opacity: 0.45;
+  cursor: default;
+  border-bottom-style: dashed;
+}
+
+.category.pending:hover {
+  background: #141414;
+}
+
+.category.pending .cat-caret {
+  display: none;
 }
 
 /* Chat: a compact overlay anchored top-left, just below the toolbar, growing downward as the

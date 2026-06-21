@@ -36,21 +36,32 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
-// ---- order menu: a row of top-level group buttons along the bottom. A group is either a *leaf*
-// (Digging orders — its tool boxes show directly) or a *branch* (Build — opening it lists the build
-// sub-categories, and picking one descends to that category's tool boxes with a back chip). Each
-// tool carries the op it sends (designate vs build) and how it places (tileMode). Dig tools come
-// from designations.js; build categories from buildings.js, so every new build category in step 4
-// appears under Build with no UI change. ----
+// ---- order menu: top-level group buttons split across two boxes at the top — Designate (dig,
+// chop, gather, engrave, remove) and Place (build, stockpiles, zones). A group is either a *leaf*
+// (its tool boxes show directly), a *branch* (Build — opening it lists sub-categories, and picking
+// one descends to that category's tool boxes with a back chip), or *pending* (scaffolded, no backend
+// yet — dimmed and inert). Each tool carries the op it sends (designate vs build) and how it places
+// (tileMode). Dig tools come from designations.js; build categories from buildings.js. ----
 const DIG_ORDERS = ORDERS.map((o) => ({
   op: "designate", kind: o.kind, label: o.label, glyph: o.glyph, accent: o.accent, hotkey: o.hotkey, tileMode: "rect",
 }));
+// Mining orders fill the Dig box; "remove" gets its own box (it clears designations today, and will
+// grow to clear chop/gather/engrave once those land). The other boxes are scaffolded `pending` —
+// shown but not wired, each awaiting a live write-path probe before it does anything.
+const MINING_ORDERS = DIG_ORDERS.filter((o) => o.kind !== "remove");
+const REMOVE_ORDER = DIG_ORDERS.find((o) => o.kind === "remove");
 const CATEGORIES = [
-  { glyph: "⛏", label: "Digging orders", accent: "#e89628", orders: DIG_ORDERS },
-  { glyph: "▣", label: "Build", accent: "#9aa0a6", children: BUILD_CATEGORIES },
+  { box: "designate", glyph: "⛏", label: "Dig", accent: "#e89628", orders: MINING_ORDERS },
+  { box: "designate", glyph: "♣", label: "Chop", accent: "#8d6e3a", orders: [], pending: true },
+  { box: "designate", glyph: "✿", label: "Gather", accent: "#5aa84f", orders: [], pending: true },
+  { box: "designate", glyph: "✎", label: "Engrave", accent: "#b08bd9", orders: [], pending: true },
+  { box: "designate", glyph: "✕", label: "Remove", accent: "#9aa0a6", orders: [REMOVE_ORDER] },
+  { box: "place", glyph: "▣", label: "Build", accent: "#9aa0a6", children: BUILD_CATEGORIES },
+  { box: "place", glyph: "▦", label: "Stockpiles", accent: "#c9a227", orders: [], pending: true },
+  { box: "place", glyph: "⬚", label: "Zones", accent: "#3c9dba", orders: [], pending: true },
 ];
 
-let currentTool = DIG_ORDERS[0];
+let currentTool = MINING_ORDERS[0];
 let openCat = -1; // open top-level group, or -1 when collapsed
 let openSub = -1; // within an open branch group: open sub-category, or -1 to show the category list
 const orderButtons = new Map(); // order -> its tool button (only for the submenu currently shown)
@@ -84,19 +95,27 @@ function locate(o) {
   return { top: -1, sub: -1 };
 }
 
-// One group button per top-level category along the menubar.
+// One group button per top-level category, dropped into its box (Designate vs Place).
+const MENUBOXES = {
+  designate: document.getElementById("box-designate"),
+  place: document.getElementById("box-place"),
+};
 CATEGORIES.forEach((cat, ci) => {
   const btn = document.createElement("button");
-  btn.className = "category";
+  btn.className = cat.pending ? "category pending" : "category";
   btn.style.setProperty("--order-accent", cat.accent || "#e89628");
   const current = mkSpan("cat-current", "");
   const caret = mkSpan("cat-caret", "▴");
   btn.append(mkSpan("cat-glyph", cat.glyph), mkSpan("cat-label", cat.label), current, caret);
   btn.addEventListener("click", () => {
-    setOpenCat(openCat === ci ? -1 : ci); // toggle this group; only one open at a time
     btn.blur();
+    if (cat.pending) {
+      setStatus(`${cat.label} — coming soon`); // scaffolded box; no backend wired yet
+      return;
+    }
+    setOpenCat(openCat === ci ? -1 : ci); // toggle this group; only one open at a time
   });
-  menubar.appendChild(btn);
+  (MENUBOXES[cat.box] || menubar).appendChild(btn);
   catButtons.push({ btn, current, caret });
 });
 
