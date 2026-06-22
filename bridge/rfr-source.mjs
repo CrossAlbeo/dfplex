@@ -94,6 +94,13 @@ export class RFRSource extends DataSource {
           return Promise.all(zs.map((z) => this._streamZ(z)));
         })
         .catch((e) => this._emit({ type: S2C.ERROR, message: `zone: ${e.message}` }));
+    } else if (msg.type === C2S.COMMAND && msg.op === "resize") {
+      // Grow/shrink the stockpile or zone under msg.tile to the new footprint (msg.box + msg.mask),
+      // disambiguating overlapping zones with msg.from (the old bbox). Re-stream the mutated z.
+      this.df
+        .resize(msg.target, msg.tile, msg.box, msg.mask, msg.from)
+        .then(() => this._streamZ(msg.tile && Number.isInteger(msg.tile.z) ? msg.tile.z : this.activeZ))
+        .catch((e) => this._emit({ type: S2C.ERROR, message: `resize: ${e.message}` }));
     } else if (msg.type === C2S.COMMAND && msg.op === "stockpile-get") {
       // Editor opened a pile: read its category state and send it back for the panel.
       this.df

@@ -171,24 +171,54 @@ export class Renderer {
       ctx.textBaseline = "middle";
       ctx.font = `${Math.floor(cell * 0.8)}px "Cascadia Mono","Consolas","DejaVu Sans Mono",monospace`;
       for (const b of blds) {
+        const w = b.x1 - b.x0 + 1;
+        const h = b.y1 - b.y0 + 1;
         const bx = (b.x0 - cam.x) * cell;
         const by = (b.y0 - cam.y) * cell;
-        const bw = (b.x1 - b.x0 + 1) * cell;
-        const bh = (b.y1 - b.y0 + 1) * cell;
+        const bw = w * cell;
+        const bh = h * cell;
         if (bx > W || by > H || bx + bw < 0 || by + bh < 0) continue;
         // Activity zones all share building_type Civzone; their use is the subtype, so style by `st`.
         const style = b.bt === CIVZONE_BUILDING_TYPE ? zoneStyleFor(b.st) : styleFor(b.bt);
         const accent = style.a;
         ctx.fillStyle = accent;
-        ctx.globalAlpha = b.active ? 0.22 : 0.12;
-        ctx.fillRect(bx, by, bw, bh);
-        ctx.globalAlpha = 1;
-        ctx.strokeStyle = accent;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+        // A non-rectangular pile/zone carries a per-tile mask: tint only its occupied cells (and skip
+        // the bbox border, which would box in the holes). Rectangular ones fill+outline the whole box.
+        const mask = b.mask;
+        if (mask) {
+          ctx.globalAlpha = b.active ? 0.22 : 0.12;
+          for (let dy = 0; dy < h; dy++) {
+            for (let dx = 0; dx < w; dx++) {
+              if (mask[dy * w + dx] !== "1") continue;
+              ctx.fillRect(bx + dx * cell, by + dy * cell, cell, cell);
+            }
+          }
+          ctx.globalAlpha = 1;
+        } else {
+          ctx.globalAlpha = b.active ? 0.22 : 0.12;
+          ctx.fillRect(bx, by, bw, bh);
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = accent;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+        }
+        // Glyph at the bbox centre, or the first occupied cell when that centre is a hole.
+        let gx = bx + bw / 2;
+        let gy = by + bh / 2 + 1;
+        if (mask) {
+          const cdx = (w - 1) >> 1;
+          const cdy = (h - 1) >> 1;
+          if (mask[cdy * w + cdx] !== "1") {
+            const idx = mask.indexOf("1");
+            if (idx >= 0) {
+              gx = bx + (idx % w) * cell + cell / 2;
+              gy = by + Math.floor(idx / w) * cell + cell / 2 + 1;
+            }
+          }
+        }
         ctx.fillStyle = accent;
         ctx.globalAlpha = b.active ? 1 : 0.6;
-        ctx.fillText(style.g, bx + bw / 2, by + bh / 2 + 1);
+        ctx.fillText(style.g, gx, gy);
         ctx.globalAlpha = 1;
       }
     }

@@ -69,10 +69,17 @@ completions show up. Each entry is a rectangle (`x0,y0`–`x1,y1`) carrying the 
 type/subtype (`bt`/`st`, raw enum ids — the client maps these to glyphs) and `active` (1 once
 built/functional, 0 while placed/under construction). `i` is the DF building index (a stable id).
 Activity zones ride this same channel as `bt: 30` (`Civzone`) with `st` set to the `df.civzone_type`
-use (Meeting Area, Pen, Pond, …); the client styles those by `st`.
+use (Meeting Area, Pen, Pond, …); the client styles those by `st`. A stockpile (`bt: 29`) or zone
+(`bt: 30`) whose footprint isn't a full rectangle also carries `mask`: a row-major `'0'/'1'` string
+over its bounding box (length `(x1-x0+1)*(y1-y0+1)`, `'1'` = tile occupied), read straight from DF's
+per-tile `room.extents`. The client draws only the masked-in cells, so a non-rectangular pile/zone
+renders as its exact carved shape. `mask` is **omitted** for plain rectangles (the client fills the
+whole box) — so it appears only after a non-rectangular resize (see `op: "resize"`).
 ```jsonc
 { "type": "buildings", "z": 3, "list": [
-  { "i": 7, "x0": 10, "y0": 12, "x1": 12, "y1": 14, "bt": 13, "st": 0, "active": 0 }
+  { "i": 7, "x0": 10, "y0": 12, "x1": 12, "y1": 14, "bt": 13, "st": 0, "active": 0 },
+  { "i": 9, "x0": 20, "y0": 20, "x1": 22, "y1": 22, "bt": 30, "st": 87, "active": 1,
+    "mask": "111111100" }
 ] }
 ```
 
@@ -193,6 +200,32 @@ back on the `buildings` channel as `{ bt: 30, st: <civzone_type> }`, so it rende
 ```jsonc
 { "type": "command", "op": "zone", "kind": "z_meeting",
   "tiles": [ { "x": 10, "y": 12, "z": 3 }, { "x": 11, "y": 12, "z": 3 } ] }
+```
+
+`op: "resize"` — change the footprint of one existing stockpile or zone. `target` is a trusted key,
+`"stockpile"` or `"zone"` (mapped server-side to `building_type`, never free text). `tile` is any
+interior tile of the building to resize (the gesture: press inside it, drag a rectangle). The client
+unions (extend) or subtracts (reduce) that rectangle against the building's current tiles and sends
+the resulting footprint as `box` (`{x0,y0,z,w,h}`) plus `mask` (row-major `'0'/'1'`, length `w*h`,
+same encoding as the `buildings` channel). DF cannot mutate a constructed building's box/extents in
+place, so the server **deconstructs and reconstructs** at the new box, re-applies the saved settings
+(stockpile: the 17 category master flags; zone: subtype + active + the per-use defaults), then writes
+`mask` into `room.extents` — yielding a building identical to a fresh placement of that shape. `from`
+is the resized building's old bounding box (`{x0,y0,x1,y1}`), used only to disambiguate overlapping
+zones at `tile` (stockpiles can't overlap, so it's ignored for them). A reduce that clears the last
+tile sends `box: null` and the server just deconstructs. Safety: `target` is an allowlisted key, all
+coords are integer-coerced and finite-guarded, and `mask` is re-validated as `^[01]+$` of exactly
+`w*h` chars before it's interpolated — a bad/empty input emits no RPC. The rebuilt footprint streams
+back on the `buildings` channel (with `mask` if non-rectangular). v1 does **not** preserve zone
+assignments/links or item-level stockpile config — only the settings listed above survive.
+```jsonc
+{ "type": "command", "op": "resize", "target": "zone",
+  "tile": { "x": 10, "y": 12, "z": 3 },
+  "from": { "x0": 10, "y0": 12, "x1": 12, "y1": 14 },
+  "box":  { "x0": 10, "y0": 12, "z": 3, "w": 4, "h": 3 },
+  "mask": "111111111100" }
+{ "type": "command", "op": "resize", "target": "stockpile",
+  "tile": { "x": 10, "y": 12, "z": 3 }, "box": null }   // reduced to nothing -> deconstruct
 ```
 
 `op: "stockpile-get"` — read the category state of the pile under a single `tile` (the editor's

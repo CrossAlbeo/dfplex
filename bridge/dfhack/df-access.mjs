@@ -9,6 +9,42 @@ import { BUILD_BY_KIND } from "../../client/js/buildings.js";
 import { STOCKPILE_BY_KIND, CATEGORY_KEYS } from "../../client/js/stockpiles.js";
 import { ZONE_BY_KIND, ZONE_CIV_NAMES } from "../../client/js/zones.js";
 
+// Building types whose abstract footprint a resize can grow/shrink, mapped to the trusted DF struct
+// name. The client sends one of these keys as `target`; nothing else is ever interpolated as the type.
+const RESIZE_TARGETS = { stockpile: "Stockpile", zone: "Civzone" };
+
+// Per-use zone defaults for a RESIZED zone, where the use (subtype) is only known at runtime (read off
+// the old zone as `sub`). Each is guarded by the runtime subtype and pcall'd, so exactly the matching
+// default applies — mirrors the placement defaults in zone(), which key off the known preset instead.
+const zoneResizeDefaultsLua = (v) =>
+  `if sub==df.civzone_type.Pen then pcall(function() ${v}.zone_settings.pen.flags.check_occupants=true end) end ` +
+  `if sub==df.civzone_type.Pond then pcall(function() ${v}.zone_settings.pond.flag.keep_filled=true end) end ` +
+  `if sub==df.civzone_type.ArcheryRange then pcall(function() ${v}.zone_settings.archery.dir_x=1 ${v}.zone_settings.archery.dir_y=0 end) end ` +
+  `if sub==df.civzone_type.Tomb then pcall(function() ${v}.zone_settings.tomb.flags.whole=1 end) end ` +
+  `if sub==df.civzone_type.PlantGathering then pcall(function() local g=${v}.zone_settings.gather.flags g.pick_trees=true g.pick_shrubs=true g.gather_fallen=true end) end `;
+
+// Build a row-major '0'/'1' occupancy string over a stockpile/zone's bbox from RFR's streamed
+// room.extents (mapped by world coords, so it's robust even if room != bbox). Returns the mask ONLY
+// when the footprint is non-rectangular (has at least one empty cell); a rectangular pile/zone — and
+// every non-abstract building — gets null, so the client keeps filling the whole bbox as before.
+function occupancyMask(bd, x0, y0, x1, y1, bt) {
+  if (bt !== 29 && bt !== 30) return null; // Stockpile / Civzone only
+  const r = bd.room;
+  if (!r || !r.extents || !r.extents.length) return null;
+  const rx = r.pos_x | 0, ry = r.pos_y | 0, rw = r.width | 0, rh = r.height | 0;
+  if (rw <= 0 || rh <= 0) return null;
+  let mask = "", hole = false;
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const dx = x - rx, dy = y - ry;
+      const on = dx >= 0 && dy >= 0 && dx < rw && dy < rh && r.extents[dy * rw + dx] > 0;
+      mask += on ? "1" : "0";
+      if (!on) hole = true;
+    }
+  }
+  return hole ? mask : null;
+}
+
 // dfplex command kind -> RFR TileDigDesignation enum value.
 const DESIGNATIONS = {
   dig: 1, // DEFAULT_DIG
@@ -129,16 +165,13 @@ export class DFAccess {
         if (z < zmin || z > zmax) continue;
         seenBld.add(bd.index);
         const t = bd.building_type || {};
-        buildings.push({
-          i: bd.index,
-          x0: bd.pos_x_min | 0,
-          y0: bd.pos_y_min | 0,
-          x1: bd.pos_x_max | 0,
-          y1: bd.pos_y_max | 0,
-          bt: t.building_type ?? -1,
-          st: t.building_subtype ?? -1,
-          active: bd.active ? 1 : 0,
-        });
+        const x0 = bd.pos_x_min | 0, y0 = bd.pos_y_min | 0, x1 = bd.pos_x_max | 0, y1 = bd.pos_y_max | 0;
+        const bt = t.building_type ?? -1;
+        const rec = { i: bd.index, x0, y0, x1, y1, bt, st: t.building_subtype ?? -1, active: bd.active ? 1 : 0 };
+        // A non-rectangular stockpile/zone carries its per-tile shape so the client renders it exactly.
+        const mask = occupancyMask(bd, x0, y0, x1, y1, bt);
+        if (mask) rec.mask = mask;
+        buildings.push(rec);
       }
       const bt = b.tiles;
       if (!bt || !bt.length) continue;
@@ -323,6 +356,9 @@ export class DFAccess {
       `local st=b.settings ` +
       STOCKPILE_FILL_LUA +
       `for _,c in ipairs(cats) do fill(c) end ` +
+      // A fresh constructBuilding can leave a few extents bytes uninitialized until DF's next building
+      // pass (which never runs while paused); fill the rectangle so the pile streams as a clean shape.
+      `local r=b.room if r then for i=0,w*h-1 do r.extents[i]=1 end end ` +
       `print('dfplex stockpile ${kind} id='..tostring(b.id)..' '..w..'x'..h)`;
     await this.client.call("RunCommand", { command: "lua", arguments: [code] });
   }
@@ -515,8 +551,88 @@ export class DFAccess {
       `if not ok or not b then print('dfplex zone ${kind} err='..tostring(b)) return end ` +
       `pcall(function() if type(b.spec_sub_flag.active)=='boolean' then b.spec_sub_flag.active=true end end) ` +
       (EXTRA[preset.civ] || "") +
+      // Fill the rectangle's extents (a fresh construct can leave stray bytes until DF's next pass,
+      // which never runs while paused), so the zone streams as a clean shape rather than spurious holes.
+      `local r=b.room if r then for i=0,w*h-1 do r.extents[i]=1 end end ` +
       `print('dfplex zone ${kind} id='..tostring(b.id)..' '..w..'x'..h)`;
     await this.client.call("RunCommand", { command: "lua", arguments: [code] });
+  }
+
+  /**
+   * Grow or shrink one stockpile/zone to a new footprint. RFR has no resize RPC and DF won't let us
+   * mutate a constructed building's box+extents in place (setSize rejects built buildings; the extents
+   * pointer can't be reallocated from Lua), so — exactly like the DF-default a fresh placement produces
+   * — we DECONSTRUCT the old building and RECONSTRUCT it at the new bounding box, re-applying its
+   * settings, then write its per-tile occupancy from `mask`. DF honors a hand-set non-rectangular
+   * extents and RFR streams it back, so any shape round-trips (verified in resize-probe.mjs).
+   *
+   * The client computes the new shape (it already has the building's streamed mask) and sends:
+   *   target  trusted key "stockpile" | "zone" (the only thing mapped to a DF struct name)
+   *   tile    a tile inside the OLD building, to resolve it (findAtTile / findCivzonesAt)
+   *   from    the old bbox {x0,y0,x1,y1}, to disambiguate overlapping zones (else the first is taken)
+   *   box     the new bbox {x0,y0,w,h}; null/empty means the resize cleared it -> just deconstruct
+   *   mask    row-major '0'/'1' over box, length w*h — the new occupancy
+   * Coords are integer-coerced; the mask is re-validated to ^[01]+$ of exactly w*h before it's ever
+   * interpolated (so it can't carry Lua); a non-finite tile emits no RPC; a bad mask throws (surfaced
+   * to the client as an error). Settings preserved: a stockpile's 17 category master flags; a zone's
+   * use (subtype) + active flag + its default per-use settings (assignments/links are not, as with a
+   * fresh placement). Re-applying re-derives "accept everything in category" via the shared fill helper.
+   */
+  async resize(target, tile, box, mask, from) {
+    await this.connect();
+    const btName = RESIZE_TARGETS[target];
+    if (!btName) throw new Error(`unknown resize target: ${target}`);
+    if (!tile || !Number.isFinite(tile.x) || !Number.isFinite(tile.y) || !Number.isFinite(tile.z)) return;
+    const tx = tile.x | 0, ty = tile.y | 0, tz = tile.z | 0;
+
+    // Resolve the target. Stockpiles can't overlap, so findAtTile is exact; zones can, so prefer the
+    // civzone at the tile whose box matches the client's `from` hint, else fall back to the first.
+    const hb = from && [from.x0, from.y0, from.x1, from.y1].every(Number.isFinite)
+      ? { x0: from.x0 | 0, y0: from.y0 | 0, x1: from.x1 | 0, y1: from.y1 | 0 }
+      : { x0: -2147483648, y0: 0, x1: 0, y1: 0 }; // sentinel matches nothing -> first civzone
+    const resolve = target === "stockpile"
+      ? `local b=dfhack.buildings.findAtTile(${tx},${ty},${tz}) ` +
+        `if not b or b:getType()~=df.building_type.Stockpile then print('dfplex resize none') return end `
+      : `local _l=dfhack.buildings.findCivzonesAt(xyz2pos(${tx},${ty},${tz})) local b=nil ` +
+        `if _l then for _,zz in ipairs(_l) do if zz.x1==${hb.x0} and zz.y1==${hb.y0} and zz.x2==${hb.x1} and zz.y2==${hb.y1} then b=zz break end end if not b and #_l>0 then b=_l[1] end end ` +
+        `if not b then print('dfplex resize none') return end `;
+
+    // Empty box: the resize cleared the last tile -> resolve + deconstruct, building removed.
+    const boxOk = box && [box.x0, box.y0, box.w, box.h].every(Number.isFinite) && box.w >= 1 && box.h >= 1;
+    if (!boxOk) {
+      const code = resolve + `pcall(dfhack.buildings.deconstruct, b) print('dfplex resize ${target} removed')`;
+      await this.client.call("RunCommand", { command: "lua", arguments: [code] });
+      return;
+    }
+    const x0 = box.x0 | 0, y0 = box.y0 | 0, w = box.w | 0, h = box.h | 0;
+    if (typeof mask !== "string" || !/^[01]+$/.test(mask) || mask.length !== w * h) {
+      throw new Error(`resize: bad mask (len ${typeof mask === "string" ? mask.length : "?"} != ${w * h})`);
+    }
+    // mask is sanitized to 0/1 of exactly w*h, so interpolating it as a Lua string literal is safe.
+    const writeMask = `local r=nb.room for i=0,${w * h - 1} do r.extents[i]=(('${mask}'):sub(i+1,i+1)=='1') and 1 or 0 end `;
+
+    let body;
+    if (target === "stockpile") {
+      body =
+        `local snap={} for k,v in pairs(b.settings.flags) do if type(v)=='boolean' and v then snap[k]=true end end ` +
+        `pcall(dfhack.buildings.deconstruct, b) ` +
+        `local ok,nb=pcall(dfhack.buildings.constructBuilding,{type=df.building_type.Stockpile,pos={x=${x0},y=${y0},z=${tz}},width=${w},height=${h},abstract=true}) ` +
+        `if not ok or not nb then print('dfplex resize err='..tostring(nb)) return end ` +
+        `local st=nb.settings ` + STOCKPILE_FILL_LUA + `for k,_ in pairs(snap) do fill(k) end ` +
+        writeMask +
+        `print('dfplex resize stockpile id='..tostring(nb.id)..' ${w}x${h}')`;
+    } else {
+      body =
+        `local sub=b.type local act=b.spec_sub_flag.active ` +
+        `pcall(dfhack.buildings.deconstruct, b) ` +
+        `local ok,nb=pcall(dfhack.buildings.constructBuilding,{type=df.building_type.Civzone,subtype=sub,pos={x=${x0},y=${y0},z=${tz}},width=${w},height=${h},abstract=true}) ` +
+        `if not ok or not nb then print('dfplex resize err='..tostring(nb)) return end ` +
+        `pcall(function() if type(nb.spec_sub_flag.active)=='boolean' then nb.spec_sub_flag.active=act end end) ` +
+        zoneResizeDefaultsLua("nb") +
+        writeMask +
+        `print('dfplex resize zone id='..tostring(nb.id)..' ${w}x${h}')`;
+    }
+    await this.client.call("RunCommand", { command: "lua", arguments: [resolve + body] });
   }
 }
 

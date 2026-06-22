@@ -11,6 +11,7 @@ import { ORDERS } from "./designations.js";
 import { BUILD_CATEGORIES } from "./buildings.js";
 import { STOCKPILE_PRESETS, STOCKPILE_CATEGORIES } from "./stockpiles.js";
 import { ZONE_PRESETS } from "./zones.js";
+import { RESIZE_ORDERS, RESIZE_TARGET_BY_BT, isResizable, buildingCovers, computeResize } from "./resize.js";
 
 const view = document.getElementById("view");
 const hud = document.getElementById("hud");
@@ -72,6 +73,7 @@ const CATEGORIES = [
   { box: "place", glyph: "▣", label: "Build", accent: "#9aa0a6", children: BUILD_CATEGORIES },
   { box: "place", glyph: "▦", label: "Stockpiles", accent: "#c9a227", orders: [STOCKPILE_EDIT, ...STOCKPILE_PRESETS] },
   { box: "place", glyph: "⬚", label: "Zones", accent: "#3c9dba", orders: ZONE_PRESETS },
+  { box: "place", glyph: "⤢", label: "Resize", accent: "#d98c5f", orders: RESIZE_ORDERS },
   { box: "inspect", glyph: "☻", label: "Unit", accent: "#5ac8c8", orders: [INSPECT_UNIT] },
 ];
 
@@ -557,6 +559,29 @@ window.addEventListener("mouseup", (e) => {
         // One activity zone spans the whole rectangle; the bridge derives its bounding box from these.
         source.send({ type: C2S.COMMAND, op: "zone", kind: currentTool.kind, tiles });
         setStatus(`zone ${currentTool.label}: ${tiles.length} tile(s)`);
+      } else if (currentTool.op === "resize") {
+        // Press inside a stockpile/zone to grab it, then drag a rectangle that is unioned into (Extend)
+        // or subtracted from (Reduce) its tiles. The client already has the building's per-tile mask, so
+        // it computes the new {box, mask} here; the bridge rebuilds the building to match. The press tile
+        // both picks the building and resolves it server-side; `from` (its bbox) disambiguates overlaps.
+        const a = selStart;
+        const hit = world.buildingsOnZ(cam.z).find((b) => isResizable(b) && buildingCovers(b, a.x, a.y));
+        if (!hit) {
+          setStatus("resize: press inside a stockpile or zone");
+        } else {
+          const res = computeResize(hit, r, currentTool.kind);
+          const target = RESIZE_TARGET_BY_BT[hit.bt];
+          const tile = { x: a.x, y: a.y, z: cam.z };
+          const from = { x0: hit.x0, y0: hit.y0, x1: hit.x1, y1: hit.y1 };
+          if (res.empty) {
+            source.send({ type: C2S.COMMAND, op: "resize", target, tile, from, box: null });
+            setStatus(`resize ${currentTool.label} ${target}: removed`);
+          } else {
+            const box = { x0: res.box.x0, y0: res.box.y0, z: cam.z, w: res.box.w, h: res.box.h };
+            source.send({ type: C2S.COMMAND, op: "resize", target, tile, from, box, mask: res.mask });
+            setStatus(`resize ${currentTool.label} ${target}: ${res.box.w}×${res.box.h}`);
+          }
+        }
       } else if (currentTool.op === "stockpile-edit") {
         // Single click: ask the bridge for the pile under the anchor tile; the panel opens on reply.
         editTile = tiles[0];
