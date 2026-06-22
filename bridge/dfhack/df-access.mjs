@@ -559,12 +559,16 @@ export class DFAccess {
   }
 
   /**
-   * Grow or shrink one stockpile/zone to a new footprint. RFR has no resize RPC and DF won't let us
-   * mutate a constructed building's box+extents in place (setSize rejects built buildings; the extents
-   * pointer can't be reallocated from Lua), so — exactly like the DF-default a fresh placement produces
-   * — we DECONSTRUCT the old building and RECONSTRUCT it at the new bounding box, re-applying its
-   * settings, then write its per-tile occupancy from `mask`. DF honors a hand-set non-rectangular
-   * extents and RFR streams it back, so any shape round-trips (verified in resize-probe.mjs).
+   * Grow/shrink/reshape one stockpile/zone to a new footprint IN PLACE — without deconstructing — so
+   * the building keeps its identity and ALL its settings/links (stockpile category + item-level config,
+   * zone assignments). We mutate `b.room`'s extents + bbox directly: the extents element type is the
+   * enum `building_extents_type` (base int8_t), which `df.new` can't array-allocate, so to GROW we
+   * allocate an int8_t buffer and `df.reinterpret_cast` it to the enum pointer before assigning (proven
+   * in resize-inplace-probe.mjs); a same-or-smaller footprint reuses the existing buffer. DF does NOT
+   * fold in-place extent changes into per-tile map occupancy, so for a stockpile we set it to match what
+   * constructBuilding produces (occupancy.building = Passable on occupied tiles, None on released ones);
+   * zones don't use building occupancy (verified live), so they only get the extents+bbox poke. RFR
+   * streams `room.extents` back, so any shape round-trips and renders for free.
    *
    * The client computes the new shape (it already has the building's streamed mask) and sends:
    *   target  trusted key "stockpile" | "zone" (the only thing mapped to a DF struct name)
@@ -574,9 +578,10 @@ export class DFAccess {
    *   mask    row-major '0'/'1' over box, length w*h — the new occupancy
    * Coords are integer-coerced; the mask is re-validated to ^[01]+$ of exactly w*h before it's ever
    * interpolated (so it can't carry Lua); a non-finite tile emits no RPC; a bad mask throws (surfaced
-   * to the client as an error). Settings preserved: a stockpile's 17 category master flags; a zone's
-   * use (subtype) + active flag + its default per-use settings (assignments/links are not, as with a
-   * fresh placement). Re-applying re-derives "accept everything in category" via the shared fill helper.
+   * to the client as an error). If the in-place attempt fails outright (e.g. the realloc is rejected),
+   * it falls back to the original DECONSTRUCT + RECONSTRUCT path (which re-applies a snapshot of the
+   * stockpile's 17 category flags / the zone's use+active+per-use defaults, but — like a fresh placement
+   * — does not preserve assignments/links). That fallback is the only lossy path and shouldn't trigger.
    */
   async resize(target, tile, box, mask, from) {
     await this.connect();
@@ -609,29 +614,69 @@ export class DFAccess {
       throw new Error(`resize: bad mask (len ${typeof mask === "string" ? mask.length : "?"} != ${w * h})`);
     }
     // mask is sanitized to 0/1 of exactly w*h, so interpolating it as a Lua string literal is safe.
-    const writeMask = `local r=nb.room for i=0,${w * h - 1} do r.extents[i]=(('${mask}'):sub(i+1,i+1)=='1') and 1 or 0 end `;
+    const isPile = target === "stockpile";
+    const nN = w * h;
 
-    let body;
-    if (target === "stockpile") {
-      body =
-        `local snap={} for k,v in pairs(b.settings.flags) do if type(v)=='boolean' and v then snap[k]=true end end ` +
-        `pcall(dfhack.buildings.deconstruct, b) ` +
-        `local ok,nb=pcall(dfhack.buildings.constructBuilding,{type=df.building_type.Stockpile,pos={x=${x0},y=${y0},z=${tz}},width=${w},height=${h},abstract=true}) ` +
+    // Snapshot settings — only the rebuild FALLBACK uses these; the in-place path preserves everything
+    // by never destroying the building.
+    const snap = isPile
+      ? `local snap={} for k,v in pairs(b.settings.flags) do if type(v)=='boolean' and v then snap[k]=true end end `
+      : `local sub=b.type local act=b.spec_sub_flag.active `;
+
+    // Occupancy reconcile (STOCKPILE only): DF won't fold an in-place extent change into the per-tile
+    // map occupancy, so set it ourselves to match constructBuilding — Passable on every occupied tile,
+    // None on tiles the old footprint occupied but the new one doesn't. Zones don't use it (occ === "").
+    const occ = isPile
+      ? `local function setOcc(x,y,v) local blk=dfhack.maps.getTileBlock(x,y,Z) if blk then blk.occupancy[x%16][y%16].building=v end end ` +
+        `for _,c in ipairs(oldocc) do setOcc(c[1],c[2],df.tile_building_occ.None) end ` +
+        `for dy=0,${h - 1} do for dx=0,${w - 1} do if r.extents[dy*${w}+dx]~=0 then setOcc(${x0}+dx,${y0}+dy,df.tile_building_occ.Passable) end end end `
+      : ``;
+
+    // In-place edit: reshape b.room's extents + bbox with no deconstruct (links/settings survive).
+    const inplace =
+      `local function tryInplace() ` +
+      `local r=b.room if not r then return false end ` +
+      `local oW,oH,oX,oY=r.width,r.height,r.x,r.y ` +
+      // capture the old occupied world tiles first (for the stockpile occupancy clear)
+      `local oldocc={} if r.extents~=nil then for dy=0,oH-1 do for dx=0,oW-1 do if r.extents[dy*oW+dx]~=0 then oldocc[#oldocc+1]={oX+dx,oY+dy} end end end end ` +
+      // grow needs a bigger extents buffer: enum building_extents_type can't be array-new'd, so make an
+      // int8_t array and reinterpret_cast it (assign while dims are still old so reads stay in-bounds).
+      `if ${nN} > oW*oH then ` +
+      `local old=r.extents ` +
+      `local okM,buf=pcall(df.new,'int8_t',${nN}) if not(okM and buf) then return false end ` +
+      `local okR,view=pcall(df.reinterpret_cast,df.building_extents_type,buf) if not(okR and view) then pcall(df.delete,buf) return false end ` +
+      `local okA=pcall(function() r.extents=view end) if not okA then pcall(df.delete,buf) return false end ` +
+      `pcall(df.delete,old) end ` +
+      // write the new mask linearly (row-major over WxH), then commit dims + bbox
+      `for i=0,${nN - 1} do r.extents[i]=(('${mask}'):sub(i+1,i+1)=='1') and 1 or 0 end ` +
+      `r.x,r.y,r.width,r.height=${x0},${y0},${w},${h} ` +
+      `b.x1,b.y1,b.x2,b.y2=${x0},${y0},${x0 + w - 1},${y0 + h - 1} ` +
+      occ +
+      `return true end `;
+
+    // Rebuild FALLBACK (only if tryInplace fails): the original deconstruct + reconstruct path.
+    const writeMaskNb = `local r=nb.room for i=0,${nN - 1} do r.extents[i]=(('${mask}'):sub(i+1,i+1)=='1') and 1 or 0 end `;
+    const rebuild = isPile
+      ? `pcall(dfhack.buildings.deconstruct, b) ` +
+        `local ok,nb=pcall(dfhack.buildings.constructBuilding,{type=df.building_type.Stockpile,pos={x=${x0},y=${y0},z=Z},width=${w},height=${h},abstract=true}) ` +
         `if not ok or not nb then print('dfplex resize err='..tostring(nb)) return end ` +
         `local st=nb.settings ` + STOCKPILE_FILL_LUA + `for k,_ in pairs(snap) do fill(k) end ` +
-        writeMask +
-        `print('dfplex resize stockpile id='..tostring(nb.id)..' ${w}x${h}')`;
-    } else {
-      body =
-        `local sub=b.type local act=b.spec_sub_flag.active ` +
-        `pcall(dfhack.buildings.deconstruct, b) ` +
-        `local ok,nb=pcall(dfhack.buildings.constructBuilding,{type=df.building_type.Civzone,subtype=sub,pos={x=${x0},y=${y0},z=${tz}},width=${w},height=${h},abstract=true}) ` +
+        writeMaskNb +
+        `print('dfplex resize stockpile id='..tostring(nb.id)..' ${w}x${h} rebuilt')`
+      : `pcall(dfhack.buildings.deconstruct, b) ` +
+        `local ok,nb=pcall(dfhack.buildings.constructBuilding,{type=df.building_type.Civzone,subtype=sub,pos={x=${x0},y=${y0},z=Z},width=${w},height=${h},abstract=true}) ` +
         `if not ok or not nb then print('dfplex resize err='..tostring(nb)) return end ` +
         `pcall(function() if type(nb.spec_sub_flag.active)=='boolean' then nb.spec_sub_flag.active=act end end) ` +
         zoneResizeDefaultsLua("nb") +
-        writeMask +
-        `print('dfplex resize zone id='..tostring(nb.id)..' ${w}x${h}')`;
-    }
+        writeMaskNb +
+        `print('dfplex resize zone id='..tostring(nb.id)..' ${w}x${h} rebuilt')`;
+
+    const body =
+      `local Z=b.z ` + snap + inplace +
+      `local s,res=pcall(tryInplace) ` +
+      `if s and res then print('dfplex resize ${target} id='..tostring(b.id)..' ${w}x${h} inplace') else ` +
+      rebuild + ` end`;
+
     await this.client.call("RunCommand", { command: "lua", arguments: [resolve + body] });
   }
 }

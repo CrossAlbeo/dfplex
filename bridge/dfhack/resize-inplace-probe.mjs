@@ -162,6 +162,69 @@ ${dump("b")}
 `);
   console.log("  [persistence] re-read via findAtTile in a later RPC:");
   await lua(`local b=dfhack.buildings.findAtTile(${AX},${AY},${AZ}) if not b then print('PROBE not found') return end ${dump("b")}`);
+} else if (mode === "--occ") {
+  // Does DF adopt in-place extents changes into per-tile occupancy (so dwarves haul to grown tiles and
+  // release shrunk ones), or must we poke block.occupancy ourselves? Also: is df.delete(old extents)
+  // safe after a realloc, or should we leak? Builds a THROWAWAY pile and verifies across RPCs.
+  const ox = Number(process.argv[3]), oy = Number(process.argv[4]), oz = Number(process.argv[5]);
+  if (![ox, oy, oz].every(Number.isFinite)) {
+    console.error("--occ needs X Y Z (an open spot for a throwaway pile)");
+  } else {
+    // tile_occupancy in 53.x flattens its bitfield: the building-occupancy enum is o.building directly
+    // (no .bits). A stockpile tile reads building=2 (tile_building_occ.Passable); open tile reads 0.
+    const occHelper = `local function occAt(x,y,z) local blk=dfhack.maps.getTileBlock(x,y,z) if not blk then return 'noblock' end local o=blk.occupancy[x%16][y%16] return 'building='..tostring(o.building)..' whole='..tostring(o.whole) end `;
+    // [a] ground-truth target: occupancy of an ESTABLISHED pile's interior tile (DF's pass has run on it)
+    console.log(`\n[occ a] target occupancy from the established pile under the anchor (${AX},${AY},${AZ}):`);
+    await lua(occHelper + `print('PROBE established interior occ '..occAt(${AX},${AY},${AZ}))`);
+    // [b] build a throwaway 5x4, fill extents, read interior + a soon-to-grow tile (baseline)
+    console.log(`\n[occ b] build throwaway 5x4 @ (${ox},${oy},${oz}); read interior + the to-be-grown tile:`);
+    await lua(occHelper + `
+local X,Y,Z = ${ox},${oy},${oz}
+for i=#df.global.world.buildings.all-1,0,-1 do local b=df.global.world.buildings.all[i] if b:getType()==df.building_type.Stockpile and b.z==Z and not(b.x2<X or b.x1>X+8 or b.y2<Y or b.y1>Y+6) then pcall(dfhack.buildings.deconstruct,b) end end
+local ok,b = pcall(dfhack.buildings.constructBuilding,{type=df.building_type.Stockpile,pos={x=X,y=Y,z=Z},width=5,height=4,abstract=true})
+if not ok or not b then print('PROBE build FAILED='..tostring(b)) return end
+local r=b.room for i=0,5*4-1 do r.extents[i]=1 end
+print('PROBE built id='..b.id..' box=('..b.x1..','..b.y1..')-('..b.x2..','..b.y2..') room '..r.width..'x'..r.height)
+print('PROBE   interior  ('..(X+1)..','..(Y+1)..') occ '..occAt(X+1,Y+1,Z))
+print('PROBE   to-grow   ('..(X+5)..','..(Y+1)..') occ '..occAt(X+5,Y+1,Z))`);
+    // [c] grow in place to 7x4 (realloc), test df.delete(old), commit dims+bbox
+    console.log(`\n[occ c] grow in place to 7x4 (realloc), test df.delete(old buffer):`);
+    await lua(occHelper + `
+local X,Y,Z = ${ox},${oy},${oz}
+local b = dfhack.buildings.findAtTile(X+1,Y+1,Z) if not b then print('PROBE grow: not found') return end
+local r = b.room
+local nW,nH = 7,4 local nN = nW*nH
+local old = r.extents
+local okMake, buf = pcall(df.new, 'int8_t', nN)
+if not (okMake and buf) then print('PROBE grow: df.new failed='..tostring(buf)) return end
+local okR, view = pcall(df.reinterpret_cast, df.building_extents_type, buf)
+if not (okR and view) then print('PROBE grow: reinterpret failed') pcall(df.delete,buf) return end
+local okA = pcall(function() r.extents = view end)
+print('PROBE grow: assign ok='..tostring(okA))
+if not okA then pcall(df.delete,buf) return end
+local okD, eD = pcall(df.delete, old)
+print('PROBE grow: df.delete(old) ok='..tostring(okD)..' err='..tostring(eD))
+for i=0,nN-1 do r.extents[i]=1 end
+r.x,r.y,r.width,r.height = X,Y,nW,nH
+b.x1,b.y1,b.x2,b.y2 = X,Y,X+nW-1,Y+nH-1
+print('PROBE grow: committed 7x4 box=('..b.x1..','..b.y1..')-('..b.x2..','..b.y2..')')`);
+    // [d] later RPC: did the new tile's occupancy get adopted to match the target?
+    console.log(`\n[occ d] later RPC — is the grown tile's occupancy adopted (vs target from [a])?`);
+    await lua(occHelper + `local X,Y,Z=${ox},${oy},${oz} print('PROBE grown tile ('..(X+5)..','..(Y+1)..') occ '..occAt(X+5,Y+1,Z))`);
+    // [e] shrink in place to 3x4 (reuse buffer), then later check a removed tile releases occupancy
+    console.log(`\n[occ e] shrink in place to 3x4 (reuse buffer); read a removed tile next RPC:`);
+    await lua(occHelper + `
+local X,Y,Z = ${ox},${oy},${oz}
+local b = dfhack.buildings.findAtTile(X+1,Y+1,Z) if not b then print('PROBE shrink: not found') return end
+local r = b.room for i=0,3*4-1 do r.extents[i]=1 end
+r.x,r.y,r.width,r.height = X,Y,3,4
+b.x1,b.y1,b.x2,b.y2 = X,Y,X+2,Y+3
+print('PROBE shrink: committed 3x4 box=('..b.x1..','..b.y1..')-('..b.x2..','..b.y2..')')`);
+    await lua(occHelper + `local X,Y,Z=${ox},${oy},${oz} print('PROBE removed tile ('..(X+5)..','..(Y+1)..') occ '..occAt(X+5,Y+1,Z)..' ; still-in ('..(X+1)..','..(Y+1)..') occ '..occAt(X+1,Y+1,Z))`);
+    // cleanup
+    console.log(`\n[occ cleanup] deconstruct the throwaway:`);
+    await lua(`local X,Y,Z=${ox},${oy},${oz} local n=0 for i=#df.global.world.buildings.all-1,0,-1 do local b=df.global.world.buildings.all[i] if b:getType()==df.building_type.Stockpile and b.z==Z and not(b.x2<X or b.x1>X+8 or b.y2<Y or b.y1>Y+6) then if pcall(dfhack.buildings.deconstruct,b) then n=n+1 end end end print('PROBE cleanup removed '..n)`);
+  }
 } else if (mode === "--reduce") {
   // Carve the current shape to a non-rectangle WITHOUT changing the bbox (no realloc).
   // Remove the bottom-right block of the current footprint.
