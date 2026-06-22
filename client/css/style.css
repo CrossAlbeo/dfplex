@@ -418,3 +418,66 @@ body {
 #sp-editor .sp-cat.on .sp-box {
   color: #c9a227;
 }
+
+/* Unit inspect panel: a read-only card in the same top-right slot as the stockpile editor (only one
+   is open at a time). A title (the unit's name) over key/value detail rows. */
+#unit-panel {
+  position: fixed;
+  right: 8px;
+  top: 48px;
+  z-index: 12;
+  width: 230px;
+  display: none;
+  flex-direction: column;
+  background: rgba(16, 16, 16, 0.97);
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+
+#unit-panel.open {
+  display: flex;
+}
+
+#unit-panel .u-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+#unit-panel .u-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: bold;
+  color: #5ac8c8;
+  overflow-wrap: anywhere;
+}
+
+#unit-panel .u-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px 8px;
+}
+
+#unit-panel .u-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+#unit-panel .u-key {
+  flex: 0 0 54px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+#unit-panel .u-val {
+  flex: 1;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}

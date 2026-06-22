@@ -96,6 +96,12 @@ export class RFRSource extends DataSource {
         .then(() => this.df.stockpileGet(msg.tile))
         .then((s) => this._emit({ type: S2C.STOCKPILE, box: s.box, cats: s.cats || {} }))
         .catch((e) => this._emit({ type: S2C.ERROR, message: `stockpile-set: ${e.message}` }));
+    } else if (msg.type === C2S.COMMAND && msg.op === "unit-get") {
+      // Inspect panel clicked a unit: read its detail and send it back for the panel.
+      this.df
+        .unitGet(msg.id)
+        .then((u) => this._emit({ type: S2C.UNIT, info: u.info }))
+        .catch((e) => this._emit({ type: S2C.ERROR, message: `unit-get: ${e.message}` }));
     }
   }
 

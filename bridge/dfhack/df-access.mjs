@@ -399,5 +399,67 @@ export class DFAccess {
       `print('dfplex spset id='..tostring(b.id)..' on='..#on..' off='..#off)`;
     await this.client.call("RunCommand", { command: "lua", arguments: [code] });
   }
+
+  /**
+   * Read one unit's detail for the inspect panel. The client clicks a dwarf; it already has that
+   * unit's id from the streamed `units` feed (RFR GetUnitList), so it sends the id and the backend
+   * resolves it with df.unit.find(id) in core Lua — that unlocks the human-readable fields GetUnitList
+   * doesn't carry (profession name, race name, happiness, current job, wounds). The id is integer-
+   * coerced and finite-guarded, so only an integer ever reaches the Lua (no client free text); a
+   * non-finite / missing id emits no RPC. Each lookup is pcall-guarded in the Lua so a helper that's
+   * absent in this DFHack build comes back empty rather than blanking the whole read. The reply rides
+   * the print() surface (RunCommand's output type is EmptyMessage), captured via callText. Each field
+   * is its own `dfplex unit <key>=<value>` line so a free-form value — the readable name carries
+   * commas, quotes and '=' — parses cleanly. Returns { info:{…} }, or { info:null } when no such unit.
+   */
+  async unitGet(id) {
+    await this.connect();
+    if (id == null || !Number.isFinite(Number(id))) return { info: null };
+    const i = Number(id) | 0;
+    const code =
+      `local u=df.unit.find(${i}) ` +
+      `if not u then print('dfplex unit none') return end ` +
+      `local function s(f) local ok,v=pcall(f) if ok and v~=nil then return tostring(v) end return '' end ` +
+      `local function p(k,f) print('dfplex unit '..k..'='..s(f)) end ` +
+      `print('dfplex unit id=${i}') ` +
+      `p('name',function() return dfhack.units.getReadableName(u) end) ` +
+      `p('prof',function() return dfhack.units.getProfessionName(u) end) ` +
+      `p('race',function() return dfhack.units.getRaceName(u) end) ` +
+      `p('age',function() return dfhack.units.getAge(u,true) end) ` +
+      `p('citizen',function() return dfhack.units.isCitizen(u) end) ` +
+      `p('dead',function() return dfhack.units.isDead(u) end) ` +
+      `p('soldier',function() return u.military and u.military.squad_id>=0 end) ` +
+      `p('stress',function() return u.status.current_soul.personality.stress end) ` +
+      `p('stresscat',function() return dfhack.units.getStressCategory and dfhack.units.getStressCategory(u) end) ` +
+      `p('job',function() local j=u.job.current_job if j then return df.job_type[j.job_type] end return 'Idle' end) ` +
+      `p('wounds',function() return #u.body.wounds end)`;
+    const { text } = await this.client.callText("RunCommand", { command: "lua", arguments: [code] });
+    const blob = text.join("\n");
+    if (/^dfplex unit none$/m.test(blob)) return { info: null };
+    const f = {};
+    for (const line of blob.split("\n")) {
+      const m = line.match(/^dfplex unit (\w+)=(.*)$/);
+      if (m) f[m[1]] = m[2];
+    }
+    if (f.id == null) return { info: null };
+    const num = (v) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
+    const age = num(f.age);
+    return {
+      info: {
+        id: i,
+        name: f.name || "",
+        profession: f.prof || "",
+        race: f.race || "",
+        age: age != null ? Math.floor(age) : null,
+        citizen: f.citizen === "true",
+        dead: f.dead === "true",
+        soldier: f.soldier === "true",
+        stress: num(f.stress),
+        stressCat: num(f.stresscat),
+        job: f.job || "",
+        wounds: num(f.wounds),
+      },
+    };
+  }
 }
 

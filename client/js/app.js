@@ -59,6 +59,9 @@ const GATHER_ORDER = { op: "designate", kind: "gather", label: "Gather plants", 
 // Edit pile: a single-click "query" tool — click an existing stockpile to open the category editor
 // (op "stockpile-edit"); it sends no placement, just asks the bridge for that pile's settings.
 const STOCKPILE_EDIT = { op: "stockpile-edit", kind: "edit", label: "Edit pile", glyph: "✐", accent: "#c9a227", tileMode: "single" };
+// Inspect unit: a single-click query tool. Click a dwarf to open a read-only info panel — it hit-tests
+// the streamed units at the clicked tile, then asks the bridge for that unit's detail (op "unit-get").
+const INSPECT_UNIT = { op: "unit-get", kind: "unit", label: "Inspect unit", glyph: "☻", accent: "#5ac8c8", tileMode: "single" };
 const CATEGORIES = [
   { box: "designate", glyph: "⛏", label: "Dig", accent: "#e89628", orders: MINING_ORDERS },
   { box: "designate", glyph: "♣", label: "Chop", accent: "#8d6e3a", orders: [CHOP_ORDER] },
@@ -68,6 +71,7 @@ const CATEGORIES = [
   { box: "place", glyph: "▣", label: "Build", accent: "#9aa0a6", children: BUILD_CATEGORIES },
   { box: "place", glyph: "▦", label: "Stockpiles", accent: "#c9a227", orders: [STOCKPILE_EDIT, ...STOCKPILE_PRESETS] },
   { box: "place", glyph: "⬚", label: "Zones", accent: "#3c9dba", orders: [], pending: true },
+  { box: "inspect", glyph: "☻", label: "Unit", accent: "#5ac8c8", orders: [INSPECT_UNIT] },
 ];
 
 let currentTool = MINING_ORDERS[0];
@@ -108,6 +112,7 @@ function locate(o) {
 const MENUBOXES = {
   designate: document.getElementById("box-designate"),
   place: document.getElementById("box-place"),
+  inspect: document.getElementById("box-inspect"),
 };
 CATEGORIES.forEach((cat, ci) => {
   const btn = document.createElement("button");
@@ -267,6 +272,7 @@ for (const cat of STOCKPILE_CATEGORIES) {
 }
 
 function openEditor(box, cats) {
+  closeUnitPanel(); // share the corner with the unit panel — only one query panel at a time
   const w = box.x1 - box.x0 + 1;
   const h = box.y1 - box.y0 + 1;
   const corner = document.createElement("b");
@@ -282,6 +288,77 @@ function closeEditor() {
 }
 
 spClose.addEventListener("click", closeEditor);
+
+// ---- unit inspect panel: a read-only floating panel the bridge fills when the Inspect tool clicks a
+// dwarf (S2C.UNIT). It shares the top-right slot with the stockpile editor, so opening one closes the
+// other. Built from DOM nodes (textContent, never innerHTML — unit names are untrusted text). ----
+const unitPanel = document.createElement("div");
+unitPanel.id = "unit-panel";
+const unitTitle = mkSpan("u-title", "");
+const unitClose = document.createElement("button");
+unitClose.className = "sp-close";
+unitClose.textContent = "✕";
+unitClose.title = "Close";
+const unitHead = document.createElement("div");
+unitHead.className = "u-head";
+unitHead.append(unitTitle, unitClose);
+const unitBody = document.createElement("div");
+unitBody.className = "u-body";
+unitPanel.append(unitHead, unitBody);
+document.body.appendChild(unitPanel);
+
+const titleCase = (s) =>
+  String(s || "").toLowerCase().replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
+const spaceCamel = (s) => String(s || "").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+// DF happiness buckets (dfhack.units.getStressCategory: 0 happiest … 6 most stressed) -> label + color.
+const MOODS = [
+  { label: "Ecstatic", color: "#5ad15a" },
+  { label: "Happy", color: "#8fd14f" },
+  { label: "Content", color: "#c9d14f" },
+  { label: "Fine", color: "#d1c14f" },
+  { label: "Stressed", color: "#d19a4f" },
+  { label: "Very stressed", color: "#d1684f" },
+  { label: "Miserable", color: "#d14f4f" },
+];
+
+// One "key: value" row; value may be a styled text span (a color tints it) or a prebuilt node.
+function uRow(key, value, valColor) {
+  const row = document.createElement("div");
+  row.className = "u-row";
+  row.append(mkSpan("u-key", key));
+  const v = mkSpan("u-val", value == null || value === "" ? "—" : String(value));
+  if (valColor) v.style.color = valColor;
+  row.append(v);
+  return row;
+}
+
+function openUnitPanel(info) {
+  closeEditor(); // share the corner with the stockpile editor — only one query panel at a time
+  unitTitle.textContent = info.name || "(unnamed)";
+  const tags = [];
+  if (info.dead) tags.push("Deceased");
+  if (info.citizen) tags.push("Citizen");
+  if (info.soldier) tags.push("Soldier");
+  const rows = [];
+  const profRace = [info.profession, titleCase(info.race)].filter(Boolean).join(" · ");
+  rows.push(uRow("Who", profRace));
+  if (info.age != null) rows.push(uRow("Age", `${info.age} yr`));
+  if (tags.length) rows.push(uRow("Status", tags.join(", ")));
+  if (info.stressCat != null && MOODS[info.stressCat]) {
+    const m = MOODS[info.stressCat];
+    rows.push(uRow("Mood", m.label, m.color));
+  }
+  rows.push(uRow("Job", spaceCamel(info.job)));
+  if (info.wounds) rows.push(uRow("Wounds", info.wounds, "#d1684f"));
+  unitBody.replaceChildren(...rows);
+  unitPanel.classList.add("open");
+}
+
+function closeUnitPanel() {
+  unitPanel.classList.remove("open");
+}
+
+unitClose.addEventListener("click", closeUnitPanel);
 
 // ---- chat + presence: the one cross-client channel (the bridge hub broadcasts these to all) ----
 const savedNick = localStorage.getItem("dfplex.nick") || `Player-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -381,6 +458,17 @@ function connect() {
       }
       return;
     }
+    if (m.type === S2C.UNIT) {
+      // Reply to unit-get: open the read-only info panel for the clicked dwarf, or report none found.
+      if (m.info) {
+        openUnitPanel(m.info);
+        setStatus(`inspecting ${m.info.name || "unit"}`);
+      } else {
+        closeUnitPanel();
+        setStatus("no unit under that tile");
+      }
+      return;
+    }
     world.apply(m);
     if (m.type === S2C.MAP) renderer.invalidateMap();
     if (m.type === S2C.HELLO) {
@@ -469,6 +557,18 @@ window.addEventListener("mouseup", (e) => {
         editTile = tiles[0];
         source.send({ type: C2S.COMMAND, op: "stockpile-get", tile: editTile });
         setStatus(`edit stockpile @ ${editTile.x},${editTile.y}…`);
+      } else if (currentTool.op === "unit-get") {
+        // Single click: hit-test the streamed units at the clicked tile; if one's there, ask for its
+        // detail (the panel opens on reply). The client already knows each unit's id from the feed.
+        const t = tiles[0];
+        const hit = world.unitsOnZ(cam.z).find((u) => u.x === t.x && u.y === t.y);
+        if (hit) {
+          source.send({ type: C2S.COMMAND, op: "unit-get", id: hit.id });
+          setStatus(`inspect unit @ ${t.x},${t.y}…`);
+        } else {
+          closeUnitPanel();
+          setStatus("no unit there");
+        }
       } else {
         source.send({ type: C2S.COMMAND, op: "designate", kind: currentTool.kind, tiles });
         setStatus(`${currentTool.label}: ${tiles.length} tile(s)`);

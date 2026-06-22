@@ -18,6 +18,10 @@ export const S2C = Object.freeze({
   // panel. { type:"stockpile", box:{x0,y0,x1,y1,z}, cats:{ food:bool, stone:bool, … } } — or
   // { type:"stockpile", box:null } when the clicked tile holds no pile.
   STOCKPILE: "stockpile",
+  // Reply to a `command`/`unit-get`: one unit's detail for the inspect panel.
+  // { type:"unit", info:{ id, name, profession, race, age, citizen, soldier, dead, stress, stressCat,
+  // job, wounds } } — or { type:"unit", info:null } when no unit has that id.
+  UNIT: "unit",
   ERROR: "error",
 });
 

@@ -109,6 +109,20 @@ accepts it — read from the pile's per-category master flags.
 { "type": "stockpile", "box": null }   // no pile under that tile
 ```
 
+### `unit`
+Reply to a `unit-get`: one unit's detail for the inspect panel. The server resolves the id with
+`df.unit.find` and reads the human-readable fields DFHack exposes (the streamed `units` feed only
+carries position + glyph). `info` is `null` when no unit has that id. `age` is whole years;
+`stressCat` is DF's 0–6 happiness bucket (higher = more stressed); `job` is the current job token
+(`Idle` when none); `wounds` is the wound count.
+```jsonc
+{ "type": "unit", "info": {
+  "id": 16665, "name": "Hanarr \"Berryforges\", Miner", "profession": "Miner", "race": "DWARF",
+  "age": 57, "citizen": true, "soldier": false, "dead": false,
+  "stress": 0, "stressCat": 3, "job": "Idle", "wounds": 0 } }
+{ "type": "unit", "info": null }   // no unit with that id
+```
+
 ### `error`
 ```jsonc
 { "type": "error", "message": "..." }
@@ -181,6 +195,13 @@ message so the panel reflects ground truth.
 ```jsonc
 { "type": "command", "op": "stockpile-set", "tile": { "x": 10, "y": 12, "z": 3 },
   "cats": { "food": true, "stone": false } }
+```
+
+`op: "unit-get"` — read one unit's detail for the inspect panel. The client clicks a dwarf and hit-
+tests the streamed `units` to get its `id`; the server resolves it with `df.unit.find(id)` (the id is
+integer-coerced, the only client value that reaches the Lua) and replies with a `unit` message.
+```jsonc
+{ "type": "command", "op": "unit-get", "id": 16665 }
 ```
 
 ### `chat`  *(Phase 3)*
