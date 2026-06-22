@@ -9,6 +9,7 @@
 import { PALETTE, tiledict, UNIT_DEFAULT } from "./tiledict.js";
 import { DESIG_STYLE, DESIG_FALLBACK } from "./designations.js";
 import { styleFor } from "./buildings.js";
+import { CIVZONE_BUILDING_TYPE, zoneStyleFor } from "./zones.js";
 
 const CELL = 16; // px per tile in the offscreen map cache (blitted scaled to the live zoom)
 
@@ -175,7 +176,8 @@ export class Renderer {
         const bw = (b.x1 - b.x0 + 1) * cell;
         const bh = (b.y1 - b.y0 + 1) * cell;
         if (bx > W || by > H || bx + bw < 0 || by + bh < 0) continue;
-        const style = styleFor(b.bt);
+        // Activity zones all share building_type Civzone; their use is the subtype, so style by `st`.
+        const style = b.bt === CIVZONE_BUILDING_TYPE ? zoneStyleFor(b.st) : styleFor(b.bt);
         const accent = style.a;
         ctx.fillStyle = accent;
         ctx.globalAlpha = b.active ? 0.22 : 0.12;
