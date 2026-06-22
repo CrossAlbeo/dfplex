@@ -38,7 +38,7 @@ No aggregate runner (`npm test` runs only ws-smoke). Run files individually:
 
 ```
 cd "D:/OneDrive/Code/dfplex" && for t in \
-  designate-kinds chop-gather-route build-route stockpile-route stockpile-editor-route \
+  designate-kinds chop-gather-route build-route stockpile-route stockpile-editor-route unit-route \
   designations buildings-unit stockpiles-unit chat-hub chat-join-race buildings-smoke chat-smoke; do \
   echo "=== $t ==="; node "bridge/test/$t.mjs" 2>&1 | tail -2; done
 ```
@@ -46,7 +46,8 @@ cd "D:/OneDrive/Code/dfplex" && for t in \
 (`*-route` / `designate-kinds` / `chop-gather-route` stub `df.client` and assert the right RPC + the
 coord guard — `stockpile-route` also checks the server-side bbox math + per-category enable, and
 `stockpile-editor-route` the findAtTile read/write-by-tile + the callText print parse + the category
-allowlist; `buildings-unit` / `stockpiles-unit` / `designations` are pure logic; `buildings-smoke` /
+allowlist, and `unit-route` the df.unit.find(id) read + integer id coercion + the tagged-blob parse;
+`buildings-unit` / `stockpiles-unit` / `designations` are pure logic; `buildings-smoke` /
 `chat-smoke` spawn their own mock-mode bridge on a private port; `chat-hub` / `chat-join-race` are
 headless.)
 
@@ -57,9 +58,10 @@ headless.)
 `build-center-live`, `build-size-probe`. These open their own DFAccess to :5000.
 
 **Probes (`bridge/dfhack/*-probe.mjs`, live DF):** manual de-risk scripts (dig-probe, replace-probe,
-build-probe, designate-probe, stockpile-probe). Safe to run by default; any mutating action is behind
-an explicit flag (e.g. `--mark X Y Z`, stockpile-probe's `--place X Y Z W H`). Use one to pin down a
-DFHack call **before** writing the backend for it.
+build-probe, designate-probe, stockpile-probe, unit-probe). Safe to run by default; any mutating
+action is behind an explicit flag (e.g. `--mark X Y Z`, stockpile-probe's `--place X Y Z W H`).
+unit-probe is read-only (`--id N` just picks which unit to detail-read). Use one to pin down a DFHack
+call **before** writing the backend for it.
 
 ## Add a backend slice (the repeated pattern)
 
