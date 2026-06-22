@@ -48,9 +48,11 @@ coord guard — `stockpile-route` also checks the server-side bbox math + per-ca
 `stockpile-editor-route` the findAtTile read/write-by-tile + the callText print parse + the category
 allowlist, `zone-route` the abstract-civzone create (subtype = validated `df.civzone_type`,
 `spec_sub_flag.active`, per-use defaults) + bbox + civ-name allowlist, `resize-route` the
-resolve→snapshot→deconstruct→reconstruct→re-apply→write-mask rebuild (target allowlist, overlapping-
-zone `from` disambiguation, integer coercion, mask `^[01]+$`/length gate, empty-box deconstruct-only),
-and `unit-route` the df.unit.find(id) read + integer id coercion + the tagged-blob parse;
+resolve→in-place extents edit (realloc when growing / reuse when shrinking) + bbox+dims commit +
+stockpile occupancy reconcile, with deconstruct+reconstruct only as the hard-failure fallback (target
+allowlist, overlapping-zone `from` disambiguation, integer coercion, mask `^[01]+$`/length gate,
+empty-box deconstruct-only), and `unit-route` the df.unit.find(id) read + integer id coercion + the
+tagged-blob parse;
 `buildings-unit` / `stockpiles-unit` / `designations` are pure logic, as is `resize-geom` (the
 client-side extend/reduce union/subtract → new {box, mask}); `buildings-smoke` /
 `chat-smoke` spawn their own mock-mode bridge on a private port; `chat-hub` / `chat-join-race` are
@@ -63,11 +65,13 @@ headless.)
 `build-center-live`, `build-size-probe`. These open their own DFAccess to :5000.
 
 **Probes (`bridge/dfhack/*-probe.mjs`, live DF):** manual de-risk scripts (dig-probe, replace-probe,
-build-probe, designate-probe, stockpile-probe, zone-probe, resize-probe, unit-probe). Safe to run by
-default; any mutating action is behind an explicit flag (e.g. `--mark X Y Z`, stockpile-probe's
-`--place X Y Z W H`, zone-probe's `--place X Y Z W H [type]`, resize-probe's `--test X Y Z` which
-builds+carves+destroys its own throwaway pile). unit-probe is read-only (`--id N` just picks which unit
-to detail-read). Use one to pin down a DFHack call **before** writing the backend for it.
+build-probe, designate-probe, stockpile-probe, zone-probe, resize-probe, resize-inplace-probe,
+unit-probe). Safe to run by default; any mutating action is behind an explicit flag (e.g. `--mark X Y
+Z`, stockpile-probe's `--place X Y Z W H`, zone-probe's `--place X Y Z W H [type]`, resize-probe's
+`--test X Y Z` which builds+carves+destroys its own throwaway pile, resize-inplace-probe's
+`--survey`/`--occ X Y Z`/`--mirror` which proved the in-place extents edit + occupancy reconcile the
+shipped resize now uses — `--survey` is read-only). unit-probe is read-only (`--id N` just picks which
+unit to detail-read). Use one to pin down a DFHack call **before** writing the backend for it.
 
 ## Add a backend slice (the repeated pattern)
 
