@@ -96,6 +96,19 @@ Drives the "online" count/list in each client.
 { "type": "presence", "list": [ { "id": "c1", "nick": "Urist" }, { "id": "c2", "nick": "Cog" } ] }
 ```
 
+### `stockpile`
+Reply to a `stockpile-get` (and the echo after a `stockpile-set`): the clicked pile's current
+category state, for the editor panel. `box` is the pile's bounding rectangle on its z-level
+(`x0,y0`–`x1,y1`), or `null` when the clicked tile holds no stockpile. `cats` maps each of the 17
+stockpile categories (`food`, `stone`, `wood`, `furniture`, …) to whether the pile currently
+accepts it — read from the pile's per-category master flags.
+```jsonc
+{ "type": "stockpile",
+  "box":  { "x0": 10, "y0": 12, "x1": 13, "y1": 15, "z": 3 },
+  "cats": { "food": true, "stone": false, "wood": true } }
+{ "type": "stockpile", "box": null }   // no pile under that tile
+```
+
 ### `error`
 ```jsonc
 { "type": "error", "message": "..." }
@@ -122,8 +135,12 @@ Mutates game state. `op` selects the handler; remaining fields are op-specific. 
 **known key**, never free text — the server maps it to a trusted designation/building enum, so no
 client-supplied string is ever interpolated into a DF command. `tiles` is a list of `{x,y,z}`.
 
-`op: "designate"` — apply a dig designation. `kind` ∈ `dig`, `updownstair`, `channel`, `ramp`,
-`downstair`, `upstair`, `remove` (clears the designation).
+`op: "designate"` — apply a designation. Dig kinds `kind` ∈ `dig`, `updownstair`, `channel`, `ramp`,
+`downstair`, `upstair`, `remove` (clears the designation) go through RFR's `SendDigCommand`. Plant
+kinds `chop` (trees) and `gather` (shrubs/crops) share this op but have no RFR designation, so the
+server marks the plant under each tile via DFHack core Lua (`dfhack.designations.markPlant`),
+classifying by the plant's raw `TREE` flag; the resulting `tile_dig_designation` streams back like
+any other. All kinds are trusted server-side keys, never client free text.
 ```jsonc
 { "type": "command", "op": "designate", "kind": "dig",
   "tiles": [ { "x": 10, "y": 12, "z": 3 } ] }
@@ -138,6 +155,32 @@ auto-sizing multi-tile footprints (3×3 workshop, 5×5 depot) outward from that 
 ```jsonc
 { "type": "command", "op": "build", "kind": "w_mason",
   "tiles": [ { "x": 10, "y": 12, "z": 3 } ] }
+```
+
+`op: "stockpile"` — place one stockpile spanning the whole dragged rectangle. The server derives the
+bounding box from `tiles`, builds a single abstract stockpile (`constructBuilding{abstract=true}`),
+and enables the preset's categories. `kind` is a stockpile preset key from `stockpiles.js`: `sp_all`
+(accept everything) or one per category (`sp_food`, `sp_stone`, `sp_wood`, …) — a trusted key, never
+free text.
+```jsonc
+{ "type": "command", "op": "stockpile", "kind": "sp_food",
+  "tiles": [ { "x": 10, "y": 12, "z": 3 }, { "x": 11, "y": 12, "z": 3 } ] }
+```
+
+`op: "stockpile-get"` — read the category state of the pile under a single `tile` (the editor's
+hit-test). The server resolves the pile with `dfhack.buildings.findAtTile` (any interior tile works —
+the streamed `buildings` record carries no DF id) and replies with a `stockpile` message.
+```jsonc
+{ "type": "command", "op": "stockpile-get", "tile": { "x": 10, "y": 12, "z": 3 } }
+```
+
+`op: "stockpile-set"` — toggle categories on the pile under `tile`. `cats` maps category keys to the
+desired on/off state; the server filters to the 17 known keys (unknown keys are dropped, never
+interpolated), writes each pile's per-category master flag, then re-reads and echoes a `stockpile`
+message so the panel reflects ground truth.
+```jsonc
+{ "type": "command", "op": "stockpile-set", "tile": { "x": 10, "y": 12, "z": 3 },
+  "cats": { "food": true, "stone": false } }
 ```
 
 ### `chat`  *(Phase 3)*
