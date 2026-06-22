@@ -83,6 +83,17 @@ export class RFRSource extends DataSource {
           return Promise.all(zs.map((z) => this._streamZ(z)));
         })
         .catch((e) => this._emit({ type: S2C.ERROR, message: `stockpile: ${e.message}` }));
+    } else if (msg.type === C2S.COMMAND && msg.op === "zone") {
+      // One activity zone spans the whole drag rectangle; the bridge derives its bounding box.
+      const tiles = Array.isArray(msg.tiles) ? msg.tiles : [];
+      this.df
+        .zone(msg.kind, tiles)
+        // Refresh the z-level(s) we mutated so the new zone reaches this client promptly.
+        .then(() => {
+          const zs = tiles.length ? [...new Set(tiles.map((t) => t.z))] : [this.activeZ];
+          return Promise.all(zs.map((z) => this._streamZ(z)));
+        })
+        .catch((e) => this._emit({ type: S2C.ERROR, message: `zone: ${e.message}` }));
     } else if (msg.type === C2S.COMMAND && msg.op === "stockpile-get") {
       // Editor opened a pile: read its category state and send it back for the panel.
       this.df

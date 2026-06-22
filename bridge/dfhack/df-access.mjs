@@ -7,6 +7,7 @@ import { buildTileTable } from "./tiles.mjs";
 import { TILE } from "../../client/js/protocol.js";
 import { BUILD_BY_KIND } from "../../client/js/buildings.js";
 import { STOCKPILE_BY_KIND, CATEGORY_KEYS } from "../../client/js/stockpiles.js";
+import { ZONE_BY_KIND, ZONE_CIV_NAMES } from "../../client/js/zones.js";
 
 // dfplex command kind -> RFR TileDigDesignation enum value.
 const DESIGNATIONS = {
@@ -460,6 +461,62 @@ export class DFAccess {
         wounds: num(f.wounds),
       },
     };
+  }
+
+  /**
+   * Place one activity zone spanning the drag rectangle. RFR has no zone RPC, so this runs
+   * dfhack.buildings.constructBuilding through RunCommand("lua", ...), mirroring DFHack's own
+   * quickfort/zone.lua recipe: a zone is an *abstract* civzone (building_type Civzone = 30) whose use
+   * (Meeting Area / Pen / Pond / …) rides in as the building `subtype` (a df.civzone_type value);
+   * spec_sub_flag.active makes it live. A few uses get the DF UI's default per-type settings (pen
+   * occupant-check, pond keep-filled, gather pick-all, archery facing, tomb whole-body) so they behave
+   * like a hand-placed zone. The created civzone streams back on the normal buildings channel as
+   * { bt:30, st:<subtype> } (confirmed via zone-probe.mjs), so it renders with no extra wiring.
+   *
+   * `kind` is a trusted preset key (never client free text); its `civ` enum name is re-checked against
+   * ZONE_CIV_NAMES so only a vetted df.civzone_type identifier is interpolated; coords are integer-
+   * coerced and the bounding box is computed server-side — nothing client-controlled reaches the Lua
+   * as code. Empty / all-non-finite tiles emit no RPC.
+   */
+  async zone(kind, tiles) {
+    await this.connect();
+    const preset = ZONE_BY_KIND[kind];
+    if (!preset) throw new Error(`unknown zone kind: ${kind}`);
+    // Defense-in-depth: the civzone_type name must be a known enum identifier (presets are trusted, but
+    // this guarantees only a vetted token is ever interpolated into the Lua chunk).
+    if (!ZONE_CIV_NAMES.includes(preset.civ)) throw new Error(`unknown civzone type: ${preset.civ}`);
+    if (!tiles || !tiles.length) return;
+    // Bounding box (corner + span) over the finite tiles of the drag rectangle; z from the first.
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, z = null, n = 0;
+    for (const t of tiles) {
+      if (!Number.isFinite(t.x) || !Number.isFinite(t.y) || !Number.isFinite(t.z)) continue;
+      const x = t.x | 0, y = t.y | 0;
+      if (x < x0) x0 = x;
+      if (y < y0) y0 = y;
+      if (x > x1) x1 = x;
+      if (y > y1) y1 = y;
+      if (z === null) z = t.z | 0;
+      n++;
+    }
+    if (!n) return;
+    const w = x1 - x0 + 1, h = y1 - y0 + 1;
+    // Per-use defaults, keyed by the validated civ name (mirrors quickfort/zone.lua); each pcall-guarded.
+    const EXTRA = {
+      Pen: `pcall(function() b.zone_settings.pen.flags.check_occupants=true end) `,
+      Pond: `pcall(function() b.zone_settings.pond.flag.keep_filled=true end) `,
+      ArcheryRange: `pcall(function() b.zone_settings.archery.dir_x=1 b.zone_settings.archery.dir_y=0 end) `,
+      Tomb: `pcall(function() b.zone_settings.tomb.flags.whole=1 end) `,
+      PlantGathering: `pcall(function() local g=b.zone_settings.gather.flags g.pick_trees=true g.pick_shrubs=true g.gather_fallen=true end) `,
+    };
+    const code =
+      `local x0,y0,z,w,h=${x0},${y0},${z},${w},${h} ` +
+      `local sub=df.civzone_type.${preset.civ} ` +
+      `local ok,b=pcall(dfhack.buildings.constructBuilding,{type=df.building_type.Civzone,subtype=sub,pos={x=x0,y=y0,z=z},width=w,height=h,abstract=true}) ` +
+      `if not ok or not b then print('dfplex zone ${kind} err='..tostring(b)) return end ` +
+      `pcall(function() if type(b.spec_sub_flag.active)=='boolean' then b.spec_sub_flag.active=true end end) ` +
+      (EXTRA[preset.civ] || "") +
+      `print('dfplex zone ${kind} id='..tostring(b.id)..' '..w..'x'..h)`;
+    await this.client.call("RunCommand", { command: "lua", arguments: [code] });
   }
 }
 

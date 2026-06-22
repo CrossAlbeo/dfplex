@@ -68,6 +68,8 @@ Building footprints on a z-level, re-sent per active z each tick (like `desig`),
 completions show up. Each entry is a rectangle (`x0,y0`–`x1,y1`) carrying the DF building
 type/subtype (`bt`/`st`, raw enum ids — the client maps these to glyphs) and `active` (1 once
 built/functional, 0 while placed/under construction). `i` is the DF building index (a stable id).
+Activity zones ride this same channel as `bt: 30` (`Civzone`) with `st` set to the `df.civzone_type`
+use (Meeting Area, Pen, Pond, …); the client styles those by `st`.
 ```jsonc
 { "type": "buildings", "z": 3, "list": [
   { "i": 7, "x0": 10, "y0": 12, "x1": 12, "y1": 14, "bt": 13, "st": 0, "active": 0 }
@@ -178,6 +180,18 @@ and enables the preset's categories. `kind` is a stockpile preset key from `stoc
 free text.
 ```jsonc
 { "type": "command", "op": "stockpile", "kind": "sp_food",
+  "tiles": [ { "x": 10, "y": 12, "z": 3 }, { "x": 11, "y": 12, "z": 3 } ] }
+```
+
+`op: "zone"` — place one activity zone spanning the whole dragged rectangle. The server derives the
+bounding box from `tiles` and builds a single abstract civzone (`constructBuilding{type=Civzone,
+subtype=<civzone_type>, abstract=true}`), flips `spec_sub_flag.active`, and applies the DF UI's default
+per-use settings for a few types (pen, pond, gather, archery, tomb). `kind` is a zone preset key from
+`zones.js`: `z_meeting`, `z_bedroom`, `z_pen`, `z_pond`, `z_gather`, … — a trusted key whose
+`df.civzone_type` name is re-checked against an allowlist, never free text. The created zone streams
+back on the `buildings` channel as `{ bt: 30, st: <civzone_type> }`, so it renders client-side for free.
+```jsonc
+{ "type": "command", "op": "zone", "kind": "z_meeting",
   "tiles": [ { "x": 10, "y": 12, "z": 3 }, { "x": 11, "y": 12, "z": 3 } ] }
 ```
 

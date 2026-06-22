@@ -10,6 +10,7 @@ import { WebSocketSource } from "./websocketsource.js";
 import { ORDERS } from "./designations.js";
 import { BUILD_CATEGORIES } from "./buildings.js";
 import { STOCKPILE_PRESETS, STOCKPILE_CATEGORIES } from "./stockpiles.js";
+import { ZONE_PRESETS } from "./zones.js";
 
 const view = document.getElementById("view");
 const hud = document.getElementById("hud");
@@ -70,7 +71,7 @@ const CATEGORIES = [
   { box: "designate", glyph: "✕", label: "Remove", accent: "#9aa0a6", orders: [REMOVE_ORDER] },
   { box: "place", glyph: "▣", label: "Build", accent: "#9aa0a6", children: BUILD_CATEGORIES },
   { box: "place", glyph: "▦", label: "Stockpiles", accent: "#c9a227", orders: [STOCKPILE_EDIT, ...STOCKPILE_PRESETS] },
-  { box: "place", glyph: "⬚", label: "Zones", accent: "#3c9dba", orders: [], pending: true },
+  { box: "place", glyph: "⬚", label: "Zones", accent: "#3c9dba", orders: ZONE_PRESETS },
   { box: "inspect", glyph: "☻", label: "Unit", accent: "#5ac8c8", orders: [INSPECT_UNIT] },
 ];
 
@@ -552,6 +553,10 @@ window.addEventListener("mouseup", (e) => {
         // One pile spans the whole rectangle; the bridge derives its bounding box from these tiles.
         source.send({ type: C2S.COMMAND, op: "stockpile", kind: currentTool.kind, tiles });
         setStatus(`stockpile ${currentTool.label}: ${tiles.length} tile(s)`);
+      } else if (currentTool.op === "zone") {
+        // One activity zone spans the whole rectangle; the bridge derives its bounding box from these.
+        source.send({ type: C2S.COMMAND, op: "zone", kind: currentTool.kind, tiles });
+        setStatus(`zone ${currentTool.label}: ${tiles.length} tile(s)`);
       } else if (currentTool.op === "stockpile-edit") {
         // Single click: ask the bridge for the pile under the anchor tile; the panel opens on reply.
         editTile = tiles[0];
