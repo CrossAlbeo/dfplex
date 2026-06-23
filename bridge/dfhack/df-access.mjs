@@ -13,6 +13,15 @@ import { ZONE_BY_KIND, ZONE_CIV_NAMES } from "../../client/js/zones.js";
 // name. The client sends one of these keys as `target`; nothing else is ever interpolated as the type.
 const RESIZE_TARGETS = { stockpile: "Stockpile", zone: "Civzone" };
 
+// Gate-style building types a lever / pressure plate may be linked to. The target is resolved from a
+// clicked tile (findAtTile) and its df.building_type re-checked against this frozen allowlist server
+// side — Doors are deliberately excluded (DF doesn't lever-link them; an attempt is cancelled with "No
+// mechanism for target"). Only Floodgate is live-verified so far; the rest are the same mechanism-linked
+// gate family. These are trusted DF enum identifiers (never client free text). See link().
+const LINK_TARGETS = Object.freeze([
+  "Floodgate", "Bridge", "Hatch", "GrateWall", "GrateFloor", "BarsVertical", "BarsFloor",
+]);
+
 // Per-use zone defaults for a RESIZED zone, where the use (subtype) is only known at runtime (read off
 // the old zone as `sub`). Each is guarded by the runtime subtype and pcall'd, so exactly the matching
 // default applies — mirrors the placement defaults in zone(), which key off the known preset instead.
@@ -678,6 +687,73 @@ export class DFAccess {
       rebuild + ` end`;
 
     await this.client.call("RunCommand", { command: "lua", arguments: [resolve + body] });
+  }
+
+  /**
+   * Link a lever / pressure plate to a gate-style target the faithful, multiplayer-safe way: queue a
+   * native DF LinkBuildingToTrigger job and let a mechanic haul 2 mechanisms and complete the link over
+   * real time (NOT a raw hot-wire of the link fields). The job structure was captured from DF's own
+   * "link to lever" UI and verified live (lever-link-probe.mjs): job.pos left at the (-30000) sentinel;
+   * general_refs BUILDING_TRIGGERTARGET -> target and BUILDING_HOLDER -> lever; NO job_item requirement
+   * filters — instead TWO free TRAPPARTS are pre-attached via dfhack.job.attachJobItem with roles
+   * LinkToTrigger (the mechanism installed in the lever) and LinkToTarget (installed in the target).
+   * linkIntoWorld leaves posting_index=-1 (invisible to the labor manager), so the job is then POSTED
+   * (reuse a dead posting slot, else append). On completion lever.linked_mechanisms is populated and
+   * pulling the lever drives the gate.
+   *
+   * The client sends the two clicked tiles; the backend resolves both with findAtTile and re-validates
+   * server side: the source must be a Trap of trap_type Lever/PressurePlate, the target must be one of
+   * the known gate types (LINK_TARGETS — a frozen allowlist), and they must differ. Coords are integer-
+   * coerced and finite-guarded — only integers and trusted enum identifiers reach the Lua; a non-finite
+   * tile emits no RPC. Any stale pending link job on the lever is cleared first so re-clicks are
+   * idempotent. The reply rides the print() surface (RunCommand output is EmptyMessage), captured via
+   * callText; returns { ok, msg }.
+   */
+  async link(lever, target) {
+    await this.connect();
+    const fin = (t) => t && Number.isFinite(t.x) && Number.isFinite(t.y) && Number.isFinite(t.z);
+    if (!fin(lever) || !fin(target)) return { ok: false, msg: "bad tile" };
+    const lx = lever.x | 0, ly = lever.y | 0, lz = lever.z | 0;
+    const tx = target.x | 0, ty = target.y | 0, tz = target.z | 0;
+    const tgtList = LINK_TARGETS.map((n) => `'${n}'`).join(",");
+    const code =
+      `local ok,err=pcall(function() ` +
+      `local L=dfhack.buildings.findAtTile(${lx},${ly},${lz}) ` +
+      `local T=dfhack.buildings.findAtTile(${tx},${ty},${tz}) ` +
+      `if not L then print('dfplex link err=no lever at tile') return end ` +
+      `if not T then print('dfplex link err=no target at tile') return end ` +
+      `if not (L:getType()==df.building_type.Trap and (L.trap_type==df.trap_type.Lever or L.trap_type==df.trap_type.PressurePlate)) then print('dfplex link err=not a lever/plate') return end ` +
+      `if L.id==T.id then print('dfplex link err=same building') return end ` +
+      `local tt=T:getType() local allowed=false for _,n in ipairs({${tgtList}}) do if df.building_type[n]==tt then allowed=true break end end ` +
+      `if not allowed then print('dfplex link err=target not linkable: '..tostring(df.building_type[tt])) return end ` +
+      // idempotent: drop any stale pending link job already on this lever
+      `local stale={} for _,j in ipairs(L.jobs) do if j.job_type==df.job_type.LinkBuildingToTrigger then stale[#stale+1]=j end end ` +
+      `for _,j in ipairs(stale) do pcall(dfhack.job.removeJob, j) end ` +
+      // build the job: sentinel pos, TRIGGERTARGET + HOLDER refs (DF's order), no job_item filters
+      `local job=df.job:new() job.job_type=df.job_type.LinkBuildingToTrigger ` +
+      `job.pos.x,job.pos.y,job.pos.z=-30000,-30000,-30000 ` +
+      `local tg=df.general_ref_building_triggertargetst:new() tg.building_id=T.id job.general_refs:insert('#',tg) ` +
+      `local h=df.general_ref_building_holderst:new() h.building_id=L.id job.general_refs:insert('#',h) ` +
+      // find two FREE mechanisms (TRAPPARTS not reserved/forbidden/installed/owned/etc.)
+      `local mechs={} for _,it in ipairs(df.global.world.items.other.TRAPPARTS or {}) do local f=it.flags ` +
+      `if not (f.in_job or f.forbid or f.in_building or f.removed or f.garbage_collect or f.owned or f.construction or f.dump or f.on_fire or f.trader or f.hostile) then mechs[#mechs+1]=it if #mechs>=2 then break end end end ` +
+      `if #mechs<2 then print('dfplex link err=need 2 free mechanisms (have '..#mechs..')') pcall(df.delete,job) return end ` +
+      // attach with the two link roles via DFHack's own API (extracts binned items, sets in_job)
+      `local a1=dfhack.job.attachJobItem(job,mechs[1],df.job_role_type.LinkToTrigger,-1,-1) ` +
+      `local a2=dfhack.job.attachJobItem(job,mechs[2],df.job_role_type.LinkToTarget,-1,-1) ` +
+      `if not (a1 and a2) then mechs[1].flags.in_job=false mechs[2].flags.in_job=false pcall(df.delete,job) print('dfplex link err=attach failed') return end ` +
+      `L.jobs:insert('#',job) dfhack.job.linkIntoWorld(job,true) ` +
+      // POST it (linkIntoWorld leaves posting_index=-1): reuse a dead posting slot, else append
+      `local P=df.global.world.jobs.postings local idx=-1 ` +
+      `for i=0,#P-1 do if P[i].job==nil or P[i].flags.dead then idx=i break end end ` +
+      `if idx>=0 then P[idx].job=job P[idx].flags.dead=false else P:insert('#',{new=true,job=job}) idx=#P-1 end job.posting_index=idx ` +
+      `print('dfplex link ok lever='..L.id..' target='..T.id..' job='..tostring(job.id)) ` +
+      `end) if not ok then print('dfplex link err='..tostring(err)) end`;
+    const { text } = await this.client.callText("RunCommand", { command: "lua", arguments: [code] });
+    const blob = text.join("\n");
+    const m = blob.match(/dfplex link (ok\b.*|err=.*)$/m);
+    if (m && m[1].startsWith("ok")) return { ok: true, msg: m[1] };
+    return { ok: false, msg: m ? m[1].replace(/^err=/, "") : "link failed" };
   }
 }
 

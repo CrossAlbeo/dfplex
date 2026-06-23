@@ -114,6 +114,16 @@ export class RFRSource extends DataSource {
         .then(() => this.df.stockpileGet(msg.tile))
         .then((s) => this._emit({ type: S2C.STOCKPILE, box: s.box, cats: s.cats || {} }))
         .catch((e) => this._emit({ type: S2C.ERROR, message: `stockpile-set: ${e.message}` }));
+    } else if (msg.type === C2S.COMMAND && msg.op === "link") {
+      // Link the lever/plate under msg.lever to the gate under msg.target. The effect is a queued
+      // LinkBuildingToTrigger job a mechanic completes over time — not a tile/building change — so
+      // there's nothing to re-stream; surface only a failure (or a server-side rejection) to the client.
+      this.df
+        .link(msg.lever, msg.target)
+        .then((res) => {
+          if (!res.ok) this._emit({ type: S2C.ERROR, message: `link: ${res.msg}` });
+        })
+        .catch((e) => this._emit({ type: S2C.ERROR, message: `link: ${e.message}` }));
     } else if (msg.type === C2S.COMMAND && msg.op === "unit-get") {
       // Inspect panel clicked a unit: read its detail and send it back for the panel.
       this.df
