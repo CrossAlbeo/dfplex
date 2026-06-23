@@ -38,7 +38,7 @@ No aggregate runner (`npm test` runs only ws-smoke). Run files individually:
 
 ```
 cd "D:/OneDrive/Code/dfplex" && for t in \
-  designate-kinds chop-gather-route build-route stockpile-route stockpile-editor-route zone-route resize-route unit-route lever-link-route \
+  designate-kinds chop-gather-route build-route stockpile-route stockpile-editor-route zone-route resize-route unit-route lever-link-route cage-chain-route \
   designations buildings-unit stockpiles-unit resize-geom chat-hub chat-join-race buildings-smoke chat-smoke; do \
   echo "=== $t ==="; node "bridge/test/$t.mjs" 2>&1 | tail -2; done
 ```
@@ -55,7 +55,12 @@ empty-box deconstruct-only), `unit-route` the df.unit.find(id) read + integer id
 tagged-blob parse, and `lever-link-route` the resolve→validate (Trap+trap_type, gate allowlist with
 Doors excluded, self-link reject) → faithful LinkBuildingToTrigger job (sentinel pos, TRIGGERTARGET +
 HOLDER refs, NO job_item filters, two mechanisms attached with the LinkToTrigger/LinkToTarget roles)
-→ linkIntoWorld + post, plus the callText ok/err parse and the no-RPC-on-bad-tile guard;
+→ linkIntoWorld + post, plus the callText ok/err parse and the no-RPC-on-bad-tile guard, and
+`cage-chain-route` the resolve→validate (the building is a Cage **or** Chain) → assignable guard
+(own-civ animal or already-caged creature, never a stray dwarf) → cage `assigned_units:insert('#',uid)`
+id append with a dup guard / chain `assigned` unit-*pointer* set (never the non-existent scalar
+`assigned_unit`), plus the print() ok/err parse, integer coercion of the tile **and** the unit id, and
+the no-RPC-on-non-finite/missing guard;
 `buildings-unit` / `stockpiles-unit` / `designations` are pure logic, as is `resize-geom` (the
 client-side extend/reduce union/subtract → new {box, mask}); `buildings-smoke` /
 `chat-smoke` spawn their own mock-mode bridge on a private port; `chat-hub` / `chat-join-race` are
@@ -69,15 +74,19 @@ headless.)
 
 **Probes (`bridge/dfhack/*-probe.mjs`, live DF):** manual de-risk scripts (dig-probe, replace-probe,
 build-probe, designate-probe, stockpile-probe, zone-probe, resize-probe, resize-inplace-probe,
-unit-probe, lever-link-probe). Safe to run by default; any mutating action is behind an explicit flag
+unit-probe, lever-link-probe, cage-chain-probe). Safe to run by default; any mutating action is behind an explicit flag
 (e.g. `--mark X Y Z`, stockpile-probe's `--place X Y Z W H`, zone-probe's `--place X Y Z W H [type]`,
 resize-probe's `--test X Y Z` which builds+carves+destroys its own throwaway pile,
 resize-inplace-probe's `--survey`/`--occ X Y Z`/`--mirror` which proved the in-place extents edit +
 occupancy reconcile the shipped resize now uses — `--survey` is read-only). unit-probe is read-only
 (`--id N` just picks which unit to detail-read). lever-link-probe surveys levers/gates by default,
 `--inspect X Y Z` detail-reads one building, and `--link LX LY LZ TX TY TZ` queues the faithful
-LinkBuildingToTrigger job that proved the recipe the shipped link uses. Use one to pin down a DFHack
-call **before** writing the backend for it.
+LinkBuildingToTrigger job that proved the recipe the shipped link uses. cage-chain-probe surveys built
+cages/chains + assignable creatures by default, `--inspect X Y Z` dumps a cage/chain's assignment
+fields + jobs (run it on a UI-built reference to capture ground truth), and `--assign BX BY BZ UNIT_ID`
+writes the assignment the shipped tool uses (cage `assigned_units` id append / chain `assigned`
+pointer) — it proved DF spawns the catch/haul job itself on unpause, no hand-posted job. Use one to pin
+down a DFHack call **before** writing the backend for it.
 
 ## Add a backend slice (the repeated pattern)
 
