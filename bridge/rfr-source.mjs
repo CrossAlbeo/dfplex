@@ -124,6 +124,16 @@ export class RFRSource extends DataSource {
           if (!res.ok) this._emit({ type: S2C.ERROR, message: `link: ${res.msg}` });
         })
         .catch((e) => this._emit({ type: S2C.ERROR, message: `link: ${e.message}` }));
+    } else if (msg.type === C2S.COMMAND && msg.op === "assign-occupant") {
+      // Assign the creature (msg.unit) to the cage/chain under msg.tile. DF spawns the catch/haul job
+      // itself; the only visible effect (the creature becoming caged) arrives later via the unit feed,
+      // so there's nothing to re-stream here — surface only a failure / server-side rejection.
+      this.df
+        .assignOccupant(msg.tile, msg.unit)
+        .then((res) => {
+          if (!res.ok) this._emit({ type: S2C.ERROR, message: `assign: ${res.msg}` });
+        })
+        .catch((e) => this._emit({ type: S2C.ERROR, message: `assign: ${e.message}` }));
     } else if (msg.type === C2S.COMMAND && msg.op === "unit-get") {
       // Inspect panel clicked a unit: read its detail and send it back for the panel.
       this.df

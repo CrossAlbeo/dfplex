@@ -755,5 +755,60 @@ export class DFAccess {
     if (m && m[1].startsWith("ok")) return { ok: true, msg: m[1] };
     return { ok: false, msg: m ? m[1].replace(/^err=/, "") : "link failed" };
   }
+
+  /**
+   * Assign a creature to a built cage or chain (restraint) the faithful way: write the building's
+   * assignment field and let DF's own building pass spawn the catch/haul job — a dwarf then catches the
+   * creature and cages/chains it. Verified live (cage-chain-probe.mjs): the field write alone is enough;
+   * NO job to build or post (unlike link()). The two building structs differ, confirmed by introspection:
+   *   - Cage  (building_cagest):  assigned_units is a VECTOR of unit IDS (multi-occupant) — append the id.
+   *   - Chain (building_chainst): `assigned` is a single unit POINTER (not an id, not "assigned_unit");
+   *     DF sets the companion `chained` pointer once the creature is restrained.
+   *
+   * The client sends the clicked building tile + a unit id (resolved client-side from the streamed unit
+   * feed, same as inspect). The backend resolves the building with findAtTile and re-validates server
+   * side: it must be a Cage/Chain, the unit must exist, and — to avoid caging your own dwarves by a stray
+   * click — the unit must be either an own-civ animal or an already-caged creature (a captured prisoner).
+   * Coords and the id are integer-coerced; a non-finite tile or id emits no RPC. The assignment isn't an
+   * immediate tile/building change, so nothing re-streams; the reply rides the print() surface via
+   * callText. Returns { ok, msg }.
+   */
+  async assignOccupant(tile, unit) {
+    await this.connect();
+    const fin = (t) => t && Number.isFinite(t.x) && Number.isFinite(t.y) && Number.isFinite(t.z);
+    if (!fin(tile) || !Number.isFinite(unit)) return { ok: false, msg: "bad input" };
+    const x = tile.x | 0, y = tile.y | 0, z = tile.z | 0, uid = unit | 0;
+    const code =
+      `local ok,err=pcall(function() ` +
+      `local uid=${uid} ` + // bound to a var so it never sits adjacent to '..' (numeric-literal lexer trap)
+      `local b=dfhack.buildings.findAtTile(${x},${y},${z}) ` +
+      `if not b then print('dfplex assign err=no building at tile') return end ` +
+      `local t=b:getType() ` +
+      `if not (t==df.building_type.Cage or t==df.building_type.Chain) then print('dfplex assign err=not a cage/chain') return end ` +
+      `local u=df.unit.find(uid) ` +
+      `if not u then print('dfplex assign err=no such unit') return end ` +
+      // assignable guard: own-civ animal, or an already-caged creature (captured prisoner) — never a
+      // stray dwarf. DF would still refuse a nonsensical assignment, but this keeps the footgun off.
+      `local own=false pcall(function() own=dfhack.units.isOwnCiv(u) end) ` +
+      `local animal=false pcall(function() animal=dfhack.units.isAnimal(u) end) ` +
+      `local caged=u.flags1 and u.flags1.caged ` +
+      `if not ((own and animal) or caged) then print('dfplex assign err=unit not assignable') return end ` +
+      `if t==df.building_type.Cage then ` +
+      // cage: multi-occupant vector of ids; idempotent if already present
+      `for i=0,#b.assigned_units-1 do if b.assigned_units[i]==uid then print('dfplex assign ok already cage='..b.id..' unit='..uid) return end end ` +
+      `b.assigned_units:insert('#',uid) ` +
+      `print('dfplex assign ok cage='..b.id..' unit='..uid..' count='..#b.assigned_units) ` +
+      `else ` +
+      // chain: single-occupant unit pointer; replaces any prior assignment (DF releases the old)
+      `b.assigned=u ` +
+      `print('dfplex assign ok chain='..b.id..' unit='..uid) ` +
+      `end ` +
+      `end) if not ok then print('dfplex assign err='..tostring(err)) end`;
+    const { text } = await this.client.callText("RunCommand", { command: "lua", arguments: [code] });
+    const blob = text.join("\n");
+    const m = blob.match(/dfplex assign (ok\b.*|err=.*)$/m);
+    if (m && m[1].startsWith("ok")) return { ok: true, msg: m[1] };
+    return { ok: false, msg: m ? m[1].replace(/^err=/, "") : "assign failed" };
+  }
 }
 
