@@ -64,6 +64,11 @@ const STOCKPILE_EDIT = { op: "stockpile-edit", kind: "edit", label: "Edit pile",
 // Inspect unit: a single-click query tool. Click a dwarf to open a read-only info panel — it hit-tests
 // the streamed units at the clicked tile, then asks the bridge for that unit's detail (op "unit-get").
 const INSPECT_UNIT = { op: "unit-get", kind: "unit", label: "Inspect unit", glyph: "☻", accent: "#5ac8c8", tileMode: "single" };
+// Link lever: a TWO-click tool. First click picks a lever / pressure plate, second picks a gate-style
+// target (floodgate, bridge, hatch, grate, bars); the bridge queues a faithful LinkBuildingToTrigger
+// job (op "link") and a mechanic completes it over time. Both clicks send only tile coords — the bridge
+// resolves and validates both buildings server-side.
+const LINK_LEVER = { op: "link", kind: "link", label: "Link lever", glyph: "⛓", accent: "#b5651d", tileMode: "single" };
 const CATEGORIES = [
   { box: "designate", glyph: "⛏", label: "Dig", accent: "#e89628", orders: MINING_ORDERS },
   { box: "designate", glyph: "♣", label: "Chop", accent: "#8d6e3a", orders: [CHOP_ORDER] },
@@ -74,10 +79,12 @@ const CATEGORIES = [
   { box: "place", glyph: "▦", label: "Stockpiles", accent: "#c9a227", orders: [STOCKPILE_EDIT, ...STOCKPILE_PRESETS] },
   { box: "place", glyph: "⬚", label: "Zones", accent: "#3c9dba", orders: ZONE_PRESETS },
   { box: "place", glyph: "⤢", label: "Resize", accent: "#d98c5f", orders: RESIZE_ORDERS },
+  { box: "place", glyph: "⛓", label: "Link", accent: "#b5651d", orders: [LINK_LEVER] },
   { box: "inspect", glyph: "☻", label: "Unit", accent: "#5ac8c8", orders: [INSPECT_UNIT] },
 ];
 
 let currentTool = MINING_ORDERS[0];
+let linkLever = null; // first-clicked lever tile while the Link tool waits for its target (two-click)
 let openCat = -1; // open top-level group, or -1 when collapsed
 let openSub = -1; // within an open branch group: open sub-category, or -1 to show the category list
 const orderButtons = new Map(); // order -> its tool button (only for the submenu currently shown)
@@ -216,6 +223,7 @@ function setOpenCat(ci) {
 
 function setTool(o) {
   currentTool = o;
+  linkLever = null; // changing tools cancels any half-finished lever-link pick
   for (const [ord, b] of orderButtons) b.classList.toggle("active", ord === o);
   // Reflect the armed tool on its top-level button (label + accent), so the collapsed bar reads right.
   const { top } = locate(o);
@@ -587,6 +595,19 @@ window.addEventListener("mouseup", (e) => {
         editTile = tiles[0];
         source.send({ type: C2S.COMMAND, op: "stockpile-get", tile: editTile });
         setStatus(`edit stockpile @ ${editTile.x},${editTile.y}…`);
+      } else if (currentTool.op === "link") {
+        // Two-click: first click picks the lever/plate, second picks the target. We send only tile
+        // coords; the bridge resolves + validates both buildings and queues the link job.
+        const t = tiles[0];
+        if (!linkLever) {
+          linkLever = { x: t.x, y: t.y, z: cam.z };
+          setStatus(`link: lever @ ${t.x},${t.y} — now click the target`);
+        } else {
+          const target = { x: t.x, y: t.y, z: cam.z };
+          source.send({ type: C2S.COMMAND, op: "link", lever: linkLever, target });
+          setStatus(`linking ${linkLever.x},${linkLever.y} → ${t.x},${t.y}…`);
+          linkLever = null;
+        }
       } else if (currentTool.op === "unit-get") {
         // Single click: hit-test the streamed units at the clicked tile; if one's there, ask for its
         // detail (the panel opens on reply). The client already knows each unit's id from the feed.
@@ -642,6 +663,12 @@ window.addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement) return;
   if (e.key === "Enter") {
     chatinput.focus(); // jump to chat from the map, like an in-game chat key
+    e.preventDefault();
+    return;
+  }
+  if (e.key === "Escape" && linkLever) {
+    linkLever = null; // cancel a half-finished lever-link pick before touching the menu
+    setStatus("link: cancelled");
     e.preventDefault();
     return;
   }
