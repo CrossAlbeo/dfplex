@@ -38,7 +38,7 @@ No aggregate runner (`npm test` runs only ws-smoke). Run files individually:
 
 ```
 cd "D:/OneDrive/Code/dfplex" && for t in \
-  designate-kinds chop-gather-route build-route stockpile-route stockpile-editor-route zone-route resize-route unit-route \
+  designate-kinds chop-gather-route build-route stockpile-route stockpile-editor-route zone-route resize-route unit-route lever-link-route \
   designations buildings-unit stockpiles-unit resize-geom chat-hub chat-join-race buildings-smoke chat-smoke; do \
   echo "=== $t ==="; node "bridge/test/$t.mjs" 2>&1 | tail -2; done
 ```
@@ -51,8 +51,11 @@ allowlist, `zone-route` the abstract-civzone create (subtype = validated `df.civ
 resolve→in-place extents edit (realloc when growing / reuse when shrinking) + bbox+dims commit +
 stockpile occupancy reconcile, with deconstruct+reconstruct only as the hard-failure fallback (target
 allowlist, overlapping-zone `from` disambiguation, integer coercion, mask `^[01]+$`/length gate,
-empty-box deconstruct-only), and `unit-route` the df.unit.find(id) read + integer id coercion + the
-tagged-blob parse;
+empty-box deconstruct-only), `unit-route` the df.unit.find(id) read + integer id coercion + the
+tagged-blob parse, and `lever-link-route` the resolve→validate (Trap+trap_type, gate allowlist with
+Doors excluded, self-link reject) → faithful LinkBuildingToTrigger job (sentinel pos, TRIGGERTARGET +
+HOLDER refs, NO job_item filters, two mechanisms attached with the LinkToTrigger/LinkToTarget roles)
+→ linkIntoWorld + post, plus the callText ok/err parse and the no-RPC-on-bad-tile guard;
 `buildings-unit` / `stockpiles-unit` / `designations` are pure logic, as is `resize-geom` (the
 client-side extend/reduce union/subtract → new {box, mask}); `buildings-smoke` /
 `chat-smoke` spawn their own mock-mode bridge on a private port; `chat-hub` / `chat-join-race` are
@@ -66,12 +69,15 @@ headless.)
 
 **Probes (`bridge/dfhack/*-probe.mjs`, live DF):** manual de-risk scripts (dig-probe, replace-probe,
 build-probe, designate-probe, stockpile-probe, zone-probe, resize-probe, resize-inplace-probe,
-unit-probe). Safe to run by default; any mutating action is behind an explicit flag (e.g. `--mark X Y
-Z`, stockpile-probe's `--place X Y Z W H`, zone-probe's `--place X Y Z W H [type]`, resize-probe's
-`--test X Y Z` which builds+carves+destroys its own throwaway pile, resize-inplace-probe's
-`--survey`/`--occ X Y Z`/`--mirror` which proved the in-place extents edit + occupancy reconcile the
-shipped resize now uses — `--survey` is read-only). unit-probe is read-only (`--id N` just picks which
-unit to detail-read). Use one to pin down a DFHack call **before** writing the backend for it.
+unit-probe, lever-link-probe). Safe to run by default; any mutating action is behind an explicit flag
+(e.g. `--mark X Y Z`, stockpile-probe's `--place X Y Z W H`, zone-probe's `--place X Y Z W H [type]`,
+resize-probe's `--test X Y Z` which builds+carves+destroys its own throwaway pile,
+resize-inplace-probe's `--survey`/`--occ X Y Z`/`--mirror` which proved the in-place extents edit +
+occupancy reconcile the shipped resize now uses — `--survey` is read-only). unit-probe is read-only
+(`--id N` just picks which unit to detail-read). lever-link-probe surveys levers/gates by default,
+`--inspect X Y Z` detail-reads one building, and `--link LX LY LZ TX TY TZ` queues the faithful
+LinkBuildingToTrigger job that proved the recipe the shipped link uses. Use one to pin down a DFHack
+call **before** writing the backend for it.
 
 ## Add a backend slice (the repeated pattern)
 
